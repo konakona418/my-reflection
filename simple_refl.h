@@ -93,7 +93,7 @@ namespace simple_reflection {
         ReflectionBase() = default;
 
         template <auto MemberPtr>
-        void register_member(std::string&& name) {
+        ReflectionBase& register_member(std::string&& name) {
             const auto offset = reinterpret_cast<size_t>(
                 &(
                     static_cast<ClassType *>(nullptr)
@@ -102,6 +102,8 @@ namespace simple_reflection {
             );
             constexpr bool is_const = std::is_const_v<extract_member_type_t<decltype(MemberPtr)>>;
             m_offsets[name] = Member<std::remove_const_t<extract_member_type_t<decltype(MemberPtr)>>>(offset, is_const);
+
+            return *this;
         }
 
         template <typename MemberType>
@@ -146,9 +148,11 @@ namespace simple_reflection {
         }
 
         template <auto Method>
-        void register_method(std::string&& name) {
+        ReflectionBase& register_method(std::string&& name) {
             constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
             m_funcs[name] = std::any(MethodWrapper(Method, is_const));
+
+            return *this;
         }
 
         template <
@@ -258,6 +262,11 @@ namespace simple_reflection {
             return ClassType(std::forward<ArgTypes>(args)...);
         }
     };
+
+    template <typename ClassType>
+    ReflectionBase<ClassType> make_reflection() {
+        return ReflectionBase<ClassType>();
+    }
 }
 
 #endif //SIMPLE_REFL_H
