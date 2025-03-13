@@ -34,8 +34,24 @@ namespace simple_reflection {
         using type = TypeName;
     };
 
+    template <typename TypeName>
+    using remove_const_t = typename remove_const<TypeName>::type;
+
     template <typename FullName>
     struct extract_method_types;
+
+    template <typename FullName>
+    struct method_has_const_suffix;
+
+    template <typename ReturnType, typename ClassType, typename... ArgTypes>
+    struct method_has_const_suffix<ReturnType(ClassType::*)(ArgTypes...) const> {
+        static constexpr bool value = true;
+    };
+
+    template <typename ReturnType, typename ClassType, typename... ArgTypes>
+    struct method_has_const_suffix<ReturnType(ClassType::*)(ArgTypes...)> {
+        static constexpr bool value = false;
+    };
 
     template <typename RetType, typename ClassType, typename... ArgTypes>
     struct extract_method_types<RetType(ClassType::*)(ArgTypes...)> {
@@ -48,8 +64,23 @@ namespace simple_reflection {
     struct Member {
         using type = MemberType;
         size_t offset = 0;
+        bool is_const = false;
 
         explicit Member(const size_t offset) : offset(offset) {
+        }
+
+        Member(const size_t offset, const bool is_const) : offset(offset), is_const(is_const) {
+        }
+    };
+
+    struct MethodWrapper {
+        std::any method;
+        bool is_const = false;
+
+        explicit MethodWrapper(std::any method) : method(std::move(method)) {
+        }
+
+        explicit MethodWrapper(std::any method, const bool is_const) : method(std::move(method)), is_const(is_const) {
         }
     };
 
@@ -69,7 +100,8 @@ namespace simple_reflection {
                     ->*MemberPtr
                 )
             );
-            m_offsets[name] = Member<extract_member_type_t<decltype(MemberPtr)>>(offset);
+            constexpr bool is_const = std::is_const_v<extract_member_type_t<decltype(MemberPtr)>>;
+            m_offsets[name] = Member<std::remove_const_t<extract_member_type_t<decltype(MemberPtr)>>>(offset, is_const);
         }
 
         template <typename MemberType>
@@ -90,7 +122,7 @@ namespace simple_reflection {
             using type = typename remove_const<MemberType>::type;
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 try {
-                    const Member<const type> member = std::any_cast<Member<const type>>(find->second);
+                    const Member<type> member = std::any_cast<Member<type>>(find->second);
                     return static_cast<const type *>(reinterpret_cast<void *>(&object) + member.offset);
                 } catch (const std::bad_any_cast&) {
                     return nullptr;
@@ -99,19 +131,35 @@ namespace simple_reflection {
             return nullptr;
         }
 
+        template <typename MemberType>
+        bool is_member_const(ClassType& object, std::string&& name) noexcept {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                try {
+                    using type = remove_const_t<MemberType>;
+                    const Member<type> member = std::any_cast<Member<type>>(find->second);
+                    return member.is_const;
+                } catch (const std::bad_any_cast&) {
+                    return false;
+                }
+            }
+            return false;
+        }
+
         template <auto Method>
         void register_method(std::string&& name) {
-            m_funcs[name] = std::any(Method);
+            constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
+            m_funcs[name] = std::any(MethodWrapper(Method, is_const));
         }
 
         template <
             typename ReturnType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<ReturnType(ClassType::*)(ArgTypes...)>(find->second);
+                auto fn = std::any_cast<ReturnType(ClassType::*)(ArgTypes...)>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)(std::forward<ArgTypes>(args)...);
             }
             throw std::exception();
@@ -120,7 +168,8 @@ namespace simple_reflection {
         template <typename ReturnType>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<ReturnType(ClassType::*)(void)>(find->second);
+                auto fn = std::any_cast<ReturnType(ClassType::*)()>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)();
             }
             throw std::exception();
@@ -128,7 +177,7 @@ namespace simple_reflection {
 
         void invoke_method(ClassType& object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<void(ClassType::*)(void)>(find->second);
+                auto fn = std::any_cast<void(ClassType::*)()>(std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)();
             }
             throw std::exception();
@@ -137,34 +186,44 @@ namespace simple_reflection {
         template <typename... ArgTypes>
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<void(ClassType::*)(ArgTypes...)>(find->second);
+                auto fn = std::any_cast<void(ClassType::*)(ArgTypes...)>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)(std::forward<ArgTypes>(args)...);
             }
             throw std::exception();
-        }
-
-        template <std::enable_if_t<std::is_default_constructible_v<ClassType>, bool> = false>
-        ClassType invoke_ctor() {
-            return ClassType();
         }
 
         template <
             typename ReturnType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
         >
         ReturnType invoke_const_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<ReturnType(ClassType::*)(ArgTypes...) const>(find->second);
+                auto fn = std::any_cast<ReturnType(ClassType::*)(ArgTypes...) const>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)(std::forward<ArgTypes>(args)...);
             }
             throw std::exception();
         }
 
+        bool is_method_const(ClassType& object, std::string&& name) noexcept {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                try {
+                    const auto method = std::any_cast<MethodWrapper>(find->second);
+                    return std::any_cast<bool>(method.is_const);
+                } catch (const std::bad_any_cast&) {
+                    return false;
+                }
+            }
+            return false;
+        }
+
         template <typename ReturnType>
         ReturnType invoke_const_method(ClassType& object, std::string&& name) {
-            if (auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<ReturnType(ClassType::*)(void) const>(find->second);
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn = std::any_cast<ReturnType(ClassType::*)(void) const>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)();
             }
             throw std::exception();
@@ -172,7 +231,8 @@ namespace simple_reflection {
 
         void invoke_const_method(ClassType& object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<void(ClassType::*)(void) const>(find->second);
+                auto fn = std::any_cast<void(ClassType::*)(void) const>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)();
             }
             throw std::exception();
@@ -180,11 +240,17 @@ namespace simple_reflection {
 
         template <typename... ArgTypes>
         void invoke_const_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
-            if (auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn = std::any_cast<void(ClassType::*)(ArgTypes...) const>(find->second);
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn = std::any_cast<void(ClassType::*)(ArgTypes...) const>(
+                    std::any_cast<MethodWrapper>(find->second).method);
                 return (object.*fn)(std::forward<ArgTypes>(args)...);
             }
             throw std::exception();
+        }
+
+        template <std::enable_if_t<std::is_default_constructible_v<ClassType>, bool>  = false>
+        ClassType invoke_ctor() {
+            return ClassType();
         }
 
         template <typename... ArgTypes>

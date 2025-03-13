@@ -4,15 +4,26 @@
 
 #include "simple_refl.h"
 
+#define begin_test() \
+    int _test_count = 0; \
+    int _test_passed = 0;
+
 #define test(fn) \
+    _test_count++;\
     try { \
         std::cout << "testing: " << #fn << std::endl; \
         fn(); \
         std::cout << "test passed" << std::endl << std::endl;\
+        _test_passed++;\
     } catch (const std::exception& e) { \
         std::cout << "test failed: " << e.what() << std::endl << std::endl; \
     }
 
+#define end_test() \
+    std::cout << "test count: " << _test_count << std::endl; \
+    std::cout << "test passed: " << _test_passed << std::endl; \
+    std::cout << "test failed: " << _test_count - _test_passed << std::endl; \
+    assert(_test_passed == _test_count);
 
 namespace tests {
     class Vector3 {
@@ -104,6 +115,20 @@ namespace tests {
         assert(refl.get_member_ref<int>(vec, "y") == nullptr);
     }
 
+    void test_member_is_const() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        refl.register_member<&Vector3::x>("x");
+        refl.register_member<&Vector3::k_placeholder>("k_placeholder");
+
+        assert(refl.is_member_const<int>(vec, "k_placeholder"));
+        assert(refl.is_member_const<const int>(vec, "k_placeholder"));
+        assert(!refl.is_member_const<char>(vec, "k_placeholder"));
+
+        assert(!refl.is_member_const<float>(vec, "x"));
+        assert(!refl.is_member_const<const float>(vec, "x"));
+        assert(!refl.is_member_const<int>(vec, "x"));
+    }
+
     void test_default_ctor_invocation() {
         auto vec = refl.invoke_ctor();
         assert(vec.x == 0.0f && vec.y == 0.0f && vec.z == 0.0f);
@@ -137,7 +162,7 @@ namespace tests {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
         refl.register_method<&Vector3::len>("len");
 
-        auto len = refl.invoke_method<float>(vec, "len");
+        auto len = refl.invoke_const_method<float>(vec, "len");
         std::cout << len << std::endl;
         assert(std::round(len) == 4);
     }
@@ -166,12 +191,25 @@ namespace tests {
         refl.register_method<&Vector3::len>("len");
         assert(std::round(refl.invoke_const_method<float>(vec, "len")) == 4.0f);
     }
+
+    void test_method_is_const() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        refl.register_method<&Vector3::len>("len");
+        refl.register_method<&Vector3::add_x_by_1>("add_x_by_1");
+
+        assert(refl.is_method_const(vec, "len"));
+        assert(!refl.is_method_const(vec, "add_x_by_1"));
+    }
 }
 
 int main() {
+
+    begin_test()
+
     test(tests::test_basic_register);
     test(tests::test_const_register);
     test(tests::test_incorrect_member_type);
+    test(tests::test_member_is_const);
 
     test(tests::test_default_ctor_invocation);
     test(tests::test_basic_ctor_invocation);
@@ -182,4 +220,7 @@ int main() {
     test(tests::test_method_no_ret_has_param);
     test(tests::test_method_has_ret_tuple_has_multiple_param);
     test(tests::test_const_method);
+    test(tests::test_method_is_const);
+
+    end_test();
 }
