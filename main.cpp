@@ -47,6 +47,14 @@ namespace tests {
         void add_x_by_1() {
             x += 1;
         }
+
+        std::tuple<float, float> fetch_add_x_and_y(float x, float y) {
+            float ret_x = x;
+            float ret_y = y;
+            this->x += x;
+            this->y += y;
+            return std::make_tuple(ret_x, ret_y);
+        }
     };
 
     static auto refl = simple_reflection::ReflectionBase<Vector3>();
@@ -86,6 +94,14 @@ namespace tests {
         const auto k_placeholder = refl.get_const_member_ref<int>(vec, "k_placeholder");
         assert(k_placeholder != nullptr && *k_placeholder == 114514);
         std::cout << *k_placeholder << std::endl;
+    }
+
+    void test_incorrect_member_type() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        refl.register_member<&Vector3::x>("x");
+
+        assert(refl.get_member_ref<float>(vec, "x") != nullptr);
+        assert(refl.get_member_ref<int>(vec, "y") == nullptr);
     }
 
     void test_default_ctor_invocation() {
@@ -131,16 +147,39 @@ namespace tests {
         refl.register_method<&Vector3::fetch_add_x>("fetch_add_x");
         auto ret = refl.invoke_method<float, float>(vec, "fetch_add_x", 1.0f);
         std::cout << ret << std::endl;
+
+        assert(ret == 1.0f && vec.x == 2.0f);
+    }
+
+    void test_method_has_ret_tuple_has_multiple_param() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        refl.register_method<&Vector3::fetch_add_x_and_y>("fetch_add_x_and_y");
+        auto [x, y] = refl.invoke_method<std::tuple<float, float>>(vec, "fetch_add_x_and_y", 1.0f, 2.0f);
+        std::cout << x << " " << y << std::endl;
+
+        assert(x == 1.0f && y == 2.0f);
+        assert(vec.x == 2.0f && vec.y == 4.0f);
+    }
+
+    void test_const_method() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        refl.register_method<&Vector3::len>("len");
+        assert(std::round(refl.invoke_const_method<float>(vec, "len")) == 4.0f);
     }
 }
 
 int main() {
     test(tests::test_basic_register);
     test(tests::test_const_register);
+    test(tests::test_incorrect_member_type);
+
     test(tests::test_default_ctor_invocation);
     test(tests::test_basic_ctor_invocation);
+
     test(tests::test_method_has_ret_no_param);
     test(tests::test_method_has_ret_has_param);
     test(tests::test_method_no_ret_no_param);
     test(tests::test_method_no_ret_has_param);
+    test(tests::test_method_has_ret_tuple_has_multiple_param);
+    test(tests::test_const_method);
 }
