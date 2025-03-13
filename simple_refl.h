@@ -19,10 +19,14 @@ namespace simple_reflection {
     template <typename ClassType, typename MemberType>
     struct extract_member_type<MemberType ClassType::*> {
         using type = MemberType;
+        using parent_type = ClassType;
     };
 
     template <typename FullName>
     using extract_member_type_t = typename extract_member_type<FullName>::type;
+
+    template <typename FullName>
+    using extract_member_parent_t = typename extract_member_type<FullName>::parent_type;
 
     template <typename TypeName>
     struct remove_const {
@@ -38,9 +42,6 @@ namespace simple_reflection {
     using remove_const_t = typename remove_const<TypeName>::type;
 
     template <typename FullName>
-    struct extract_method_types;
-
-    template <typename FullName>
     struct method_has_const_suffix;
 
     template <typename ReturnType, typename ClassType, typename... ArgTypes>
@@ -53,12 +54,24 @@ namespace simple_reflection {
         static constexpr bool value = false;
     };
 
+    template <typename FullName>
+    struct extract_method_types;
+
     template <typename RetType, typename ClassType, typename... ArgTypes>
     struct extract_method_types<RetType(ClassType::*)(ArgTypes...)> {
         using return_type = RetType;
         using arg_types = std::tuple<ArgTypes...>;
         using class_type = ClassType;
     };
+
+    template <typename FullName>
+    using extract_method_return_type_t = typename extract_method_types<FullName>::return_type;
+
+    template <typename FullName>
+    using extract_method_arg_types_t = typename extract_method_types<FullName>::arg_types;
+
+    template <typename FullName>
+    using extract_method_class_type_t = typename extract_method_types<FullName>::class_type;
 
     template <typename MemberType>
     struct Member {
