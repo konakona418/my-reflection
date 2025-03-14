@@ -71,7 +71,7 @@ namespace tests {
         }
     };
 
-    static auto refl = simple_reflection::make_reflection<Vector3>()
+    static auto refl = simple_reflection::make_reflection()
             .register_member<&Vector3::x>("x")
             .register_member<&Vector3::y>("y")
             .register_member<&Vector3::z>("z")
@@ -136,13 +136,13 @@ namespace tests {
     }
 
     void test_default_ctor_invocation() {
-        auto vec = refl.invoke_ctor();
+        auto vec = refl.invoke_ctor<Vector3>();
         assert(vec.x == 0.0f && vec.y == 0.0f && vec.z == 0.0f);
         std::cout << vec.x << " " << vec.y << " " << vec.z << std::endl;
     }
 
     void test_basic_ctor_invocation() {
-        auto vec2 = refl.invoke_ctor(1.0f, 2.0f, 3.0f);
+        auto vec2 = refl.invoke_ctor<Vector3>(1.0f, 2.0f, 3.0f);
         assert(vec2.x == 1.0f && vec2.y == 2.0f && vec2.z == 3.0f);
         std::cout << vec2.x << " " << vec2.y << " " << vec2.z << std::endl;
     }
@@ -172,7 +172,7 @@ namespace tests {
 
     void test_method_has_ret_has_param() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
-        auto ret = refl.invoke_method<float, float>(vec, "fetch_add_x", 1.0f);
+        auto ret = refl.invoke_method<float>(vec, "fetch_add_x", 1.0f);
         std::cout << ret << std::endl;
 
         assert(ret == 1.0f && vec.x == 2.0f);
@@ -216,7 +216,7 @@ namespace generic_tests {
         }
     };
 
-    static auto refl = simple_reflection::make_reflection<Vector3<float>>()
+    static auto refl = simple_reflection::make_reflection()
             .register_member<&Vector3<float>::x>("x")
             .register_member<&Vector3<float>::y>("y")
             .register_member<&Vector3<float>::z>("z")
@@ -247,16 +247,6 @@ namespace generic_tests {
         assert(std::round(refl.invoke_const_method<float>(vec, "len")) == 4.0f);
     }
 }
-
-class A {
-public:
-    int x;
-};
-
-class B : public A {
-public:
-    int y;
-};
 
 int main() {
     begin_test("basic") {

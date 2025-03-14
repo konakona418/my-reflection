@@ -97,7 +97,6 @@ namespace simple_reflection {
         }
     };
 
-    template <typename ClassType>
     class ReflectionBase {
         std::unordered_map<std::string, std::any> m_offsets = {};
         std::unordered_map<std::string, std::any> m_funcs = {};
@@ -107,6 +106,7 @@ namespace simple_reflection {
 
         template <auto MemberPtr>
         ReflectionBase& register_member(std::string&& name) {
+            using ClassType = extract_member_parent_t<decltype(MemberPtr)>;
             const auto offset = reinterpret_cast<size_t>(
                 &(
                     static_cast<ClassType *>(nullptr)
@@ -119,7 +119,7 @@ namespace simple_reflection {
             return *this;
         }
 
-        template <typename MemberType>
+        template <typename MemberType, typename ClassType>
         MemberType* get_member_ref(ClassType& object, std::string&& name) noexcept {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 try {
@@ -132,7 +132,7 @@ namespace simple_reflection {
             return nullptr;
         }
 
-        template <typename MemberType>
+        template <typename MemberType, typename ClassType>
         const MemberType* get_const_member_ref(ClassType& object, std::string&& name) noexcept {
             using type = typename remove_const<MemberType>::type;
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
@@ -146,7 +146,7 @@ namespace simple_reflection {
             return nullptr;
         }
 
-        template <typename MemberType>
+        template <typename MemberType, typename ClassType>
         bool is_member_const(ClassType& object, std::string&& name) noexcept {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 try {
@@ -170,8 +170,9 @@ namespace simple_reflection {
 
         template <
             typename ReturnType,
+            typename ClassType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
@@ -182,7 +183,7 @@ namespace simple_reflection {
             throw std::exception();
         }
 
-        template <typename ReturnType>
+        template <typename ReturnType, typename ClassType>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn = std::any_cast<ReturnType(ClassType::*)()>(
@@ -192,6 +193,7 @@ namespace simple_reflection {
             throw std::exception();
         }
 
+        template <typename ClassType>
         void invoke_method(ClassType& object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn = std::any_cast<void(ClassType::*)()>(std::any_cast<MethodWrapper>(find->second).method);
@@ -200,7 +202,7 @@ namespace simple_reflection {
             throw std::exception();
         }
 
-        template <typename... ArgTypes>
+        template <typename ClassType, typename... ArgTypes>
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn = std::any_cast<void(ClassType::*)(ArgTypes...)>(
@@ -212,6 +214,7 @@ namespace simple_reflection {
 
         template <
             typename ReturnType,
+            typename ClassType,
             typename... ArgTypes,
             std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
         >
@@ -224,6 +227,7 @@ namespace simple_reflection {
             throw std::exception();
         }
 
+        template <typename ClassType>
         bool is_method_const(ClassType& object, std::string&& name) noexcept {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 try {
@@ -236,7 +240,7 @@ namespace simple_reflection {
             return false;
         }
 
-        template <typename ReturnType>
+        template <typename ReturnType, typename ClassType>
         ReturnType invoke_const_method(ClassType& object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn = std::any_cast<ReturnType(ClassType::*)(void) const>(
@@ -246,6 +250,7 @@ namespace simple_reflection {
             throw std::exception();
         }
 
+        template <typename ClassType>
         void invoke_const_method(ClassType& object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn = std::any_cast<void(ClassType::*)(void) const>(
@@ -255,7 +260,7 @@ namespace simple_reflection {
             throw std::exception();
         }
 
-        template <typename... ArgTypes>
+        template <typename ClassType, typename... ArgTypes>
         void invoke_const_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn = std::any_cast<void(ClassType::*)(ArgTypes...) const>(
@@ -265,20 +270,19 @@ namespace simple_reflection {
             throw std::exception();
         }
 
-        template <std::enable_if_t<std::is_default_constructible_v<ClassType>, bool>  = false>
+        template <typename ClassType, std::enable_if_t<std::is_default_constructible_v<ClassType>, bool>  = false>
         ClassType invoke_ctor() {
             return ClassType();
         }
 
-        template <typename... ArgTypes>
+        template <typename ClassType, typename... ArgTypes>
         ClassType invoke_ctor(ArgTypes&&... args) {
             return ClassType(std::forward<ArgTypes>(args)...);
         }
     };
 
-    template <typename ClassType>
-    ReflectionBase<ClassType> make_reflection() {
-        return ReflectionBase<ClassType>();
+    inline ReflectionBase make_reflection() {
+        return {};
     }
 }
 
