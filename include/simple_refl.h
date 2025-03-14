@@ -415,7 +415,7 @@ namespace simple_reflection {
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                return invoke_method<ReturnType>(&object, std::forward<std::string>(name),
+                return invoke_method<ReturnType, ClassType, ArgTypes...>(&object, std::forward<std::string>(name),
                                                  std::forward<ArgTypes>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
@@ -434,7 +434,7 @@ namespace simple_reflection {
         template <typename ReturnType, typename ClassType>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             try {
-                return invoke_method<ReturnType>(&object, std::forward<std::string>(name));
+                return invoke_method<ReturnType, ClassType>(&object, std::forward<std::string>(name));
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -451,7 +451,7 @@ namespace simple_reflection {
         template <typename ClassType>
         void invoke_method(ClassType& object, std::string&& name) {
             try {
-                invoke_method(&object, std::forward<std::string>(name));
+                invoke_method<ClassType>(&object, std::forward<std::string>(name));
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -470,7 +470,7 @@ namespace simple_reflection {
         template <typename ClassType, typename... ArgTypes>
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                invoke_method(&object, std::forward<std::string>(name), std::forward<ArgTypes>(args)...);
+                invoke_method<ClassType, ArgTypes...>(&object, std::forward<std::string>(name), std::forward<ArgTypes>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -631,12 +631,12 @@ namespace simple_reflection {
         }
 
         template <typename ClassType, std::enable_if_t<std::is_default_constructible_v<ClassType>, bool>  = false>
-        ClassType invoke_ctor() {
+        [[deprecated]] ClassType invoke_ctor() {
             return ClassType();
         }
 
         template <typename ClassType, typename... ArgTypes>
-        ClassType invoke_ctor(ArgTypes&&... args) {
+        [[deprecated]] ClassType invoke_ctor(ArgTypes&&... args) {
             return ClassType(std::forward<ArgTypes>(args)...);
         }
     };
