@@ -28,6 +28,14 @@
     assert(_test_passed == _test_count);\
     } while (false);
 
+namespace helper_tests {
+    void test_can_cast_to() {
+        std::any x = static_cast<float>(3.14);
+        assert(simple_reflection::can_cast_to<float>(x));
+        assert(!simple_reflection::can_cast_to<int>(x));
+    }
+}
+
 namespace tests {
     class Vector3 {
         int _placeholder[4];
@@ -42,6 +50,10 @@ namespace tests {
         }
 
         Vector3(float x, float y, float z) : x(x), y(y), z(z) {
+        }
+
+        friend Vector3 operator+(const Vector3& lhs, const Vector3& rhs) {
+            return {lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
         }
 
         float len() const {
@@ -60,6 +72,14 @@ namespace tests {
 
         void add_x_by_1() {
             x += 1;
+        }
+
+        int overload_add_x(int x) {
+            return (this->x += x, x);
+        }
+
+        float overload_add_x(float x) {
+            return (this->x += x, this->x);
         }
 
         std::tuple<float, float> fetch_add_x_and_y(float x, float y) {
@@ -81,7 +101,10 @@ namespace tests {
             .register_method<&Vector3::add_x>("add_x")
             .register_method<&Vector3::fetch_add_x>("fetch_add_x")
             .register_method<&Vector3::add_x_by_1>("add_x_by_1")
-            .register_method<&Vector3::fetch_add_x_and_y>("fetch_add_x_and_y");
+            .register_method<&Vector3::fetch_add_x_and_y>("fetch_add_x_and_y")
+            .register_method<Vector3, float, float>("overload_add_x", &Vector3::overload_add_x)
+            .register_method<Vector3, int, int>("overload_add_x", &Vector3::overload_add_x);
+
 
 
     void test_basic_register() {
@@ -198,6 +221,13 @@ namespace tests {
         assert(refl.is_method_const(vec, "len"));
         assert(!refl.is_method_const(vec, "add_x_by_1"));
     }
+
+    void test_method_overload() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+
+        assert(refl.invoke_method<float>(vec, "overload_add_x", 2.0f) == 3.0f);
+        assert(refl.invoke_method<int>(vec, "overload_add_x", 1) == 1);
+    }
 }
 
 namespace generic_tests {
@@ -249,6 +279,10 @@ namespace generic_tests {
 }
 
 int main() {
+    begin_test("helpers") {
+        test(helper_tests::test_can_cast_to);
+    } end_test()
+
     begin_test("basic") {
         test(tests::test_basic_register);
         test(tests::test_const_register);
@@ -265,6 +299,7 @@ int main() {
         test(tests::test_method_has_ret_tuple_has_multiple_param);
         test(tests::test_const_method);
         test(tests::test_method_is_const);
+        test(tests::test_method_overload);
     } end_test();
 
     begin_test("generic") {
