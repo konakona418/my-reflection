@@ -1,6 +1,8 @@
-//
+// Simple Reflection Library.
 // Created on 2025/3/13.
 //
+// This library is a simple reflection library designed for C++.
+// With it, you can reflect the members and methods of a class, during runtime.
 
 #ifndef SIMPLE_REFL_H
 #define SIMPLE_REFL_H
@@ -13,45 +15,83 @@
 #include <utility>
 #include <vector>
 
+/** Simple Reflection Library. */
 namespace simple_reflection {
     template <typename FullName>
     struct extract_member_type;
 
+    /**
+     * Extract the member type and parent type from a full name.
+     * @tparam ClassType The type of the class.
+     * @tparam MemberType The type of the member.
+     */
     template <typename ClassType, typename MemberType>
     struct extract_member_type<MemberType ClassType::*> {
         using type = MemberType;
         using parent_type = ClassType;
     };
 
+    /**
+     * Extract the member type and parent type from a full name.
+     * @tparam FullName The full name of the type of the member.
+     */
     template <typename FullName>
     using extract_member_type_t = typename extract_member_type<FullName>::type;
 
+    /**
+     * Extract the parent type from a full name.
+     * @tparam FullName The full name of the type of the member.
+     */
     template <typename FullName>
     using extract_member_parent_t = typename extract_member_type<FullName>::parent_type;
 
+    /**
+     * Remove const prefix from a type.
+     * @tparam TypeName The type to remove const suffix from.
+     */
     template <typename TypeName>
     struct remove_const {
         using type = TypeName;
     };
 
+    /**
+     * Remove const prefix from a type.
+     * @tparam TypeName The type to remove const suffix from.
+     */
     template <typename TypeName>
     struct remove_const<const TypeName> {
         using type = TypeName;
     };
 
+    /**
+     * Remove const suffix from a type.
+     * @tparam TypeName The type to remove const suffix from.
+     */
     template <typename TypeName>
     struct remove_const_suffix {
         using type = TypeName;
     };
 
+    /**
+     * Remove const suffix from a type.
+     * @tparam TypeName The type to remove const suffix from.
+     */
     template <typename TypeName>
     struct remove_const_suffix<TypeName const> {
         using type = TypeName;
     };
 
+    /**
+     * Remove const prefix from a type.
+     * @tparam TypeName The type to remove const prefix from.
+     */
     template <typename TypeName>
     using remove_const_t = typename remove_const<TypeName>::type;
 
+    /**
+     * Check if a method has const suffix.
+     * @tparam FullName The full name of the method.
+     */
     template <typename FullName>
     struct method_has_const_suffix;
 
@@ -65,6 +105,10 @@ namespace simple_reflection {
         static constexpr bool value = false;
     };
 
+    /**
+     * Extract the return type, argument types, and class type from a method.
+     * @tparam FullName The full name of the method.
+     */
     template <typename FullName>
     struct extract_method_types;
 
@@ -84,11 +128,30 @@ namespace simple_reflection {
     template <typename FullName>
     using extract_method_class_type_t = typename extract_method_types<FullName>::class_type;
 
+    /**
+     * Check if a std::any instance can be cast into a specific type.
+     * @tparam T The type to check.
+     */
     template <typename T>
     bool can_cast_to(const std::any& a) {
         return std::any_cast<T>(std::addressof(a)) != nullptr;
     }
 
+    class method_not_found_exception final : public std::exception {
+        std::string method_name;
+    public:
+        explicit method_not_found_exception(std::string method_name) : method_name(std::move(method_name)) {
+        }
+
+        [[nodiscard]] const char* what() const noexcept override {
+            return ("Method \"" + method_name + "\" not found").c_str();
+        }
+    };
+
+    /**
+     * A struct to represent a member of a class.
+     * @tparam MemberType The type of the member.
+     */
     template <typename MemberType>
     struct Member {
         using type = MemberType;
@@ -102,6 +165,9 @@ namespace simple_reflection {
         }
     };
 
+    /**
+     * A struct to represent a method of a class.
+     */
     struct MethodWrapper {
         std::any method;
         bool is_const = false;
@@ -113,6 +179,9 @@ namespace simple_reflection {
         }
     };
 
+    /**
+     * A class for reflection.
+     */
     class ReflectionBase {
         std::unordered_map<std::string, std::any> m_offsets = {};
         std::unordered_map<std::string, std::pmr::vector<MethodWrapper>> m_funcs = {};
@@ -137,6 +206,11 @@ namespace simple_reflection {
     public:
         ReflectionBase() = default;
 
+        /**
+         * Register a member of a class.
+         * @tparam MemberPtr The pointer to the member.
+         * @param name The name of the member.
+         */
         template <auto MemberPtr>
         ReflectionBase& register_member(std::string&& name) {
             using ClassType = extract_member_parent_t<decltype(MemberPtr)>;
@@ -152,33 +226,39 @@ namespace simple_reflection {
             return *this;
         }
 
+        /**
+         * Find the desired member of a class.
+         * @note Returns @b nullptr if the member is not found or there's a type mismatch.
+         * @tparam MemberType The pointer to the method.
+         * @tparam ClassType The type of the class.
+         * @param name The name of the method.
+         */
         template <typename MemberType, typename ClassType>
         MemberType* get_member_ref(ClassType& object, std::string&& name) noexcept {
-            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                try {
-                    const Member<MemberType> member = std::any_cast<Member<MemberType>>(find->second);
-                    return static_cast<MemberType *>(reinterpret_cast<void *>(&object) + member.offset);
-                } catch (const std::bad_any_cast&) {
-                    return nullptr;
-                }
-            }
-            return nullptr;
+            return get_member_ref<MemberType, ClassType>(&object, std::move(name));
         }
 
+        /**
+         * Find the desired const member of a class.
+         * @note Returns @b nullptr if the member is not found or there's a type mismatch.
+         * @tparam MemberType The type of the member.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the member.
+         * @return The pointer to the member.
+         */
         template <typename MemberType, typename ClassType>
         const MemberType* get_const_member_ref(ClassType& object, std::string&& name) noexcept {
-            using type = typename remove_const<MemberType>::type;
-            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                try {
-                    const Member<type> member = std::any_cast<Member<type>>(find->second);
-                    return static_cast<const type *>(reinterpret_cast<void *>(&object) + member.offset);
-                } catch (const std::bad_any_cast&) {
-                    return nullptr;
-                }
-            }
+            return get_const_member_ref<MemberType, ClassType>(&object, std::move(name));
             return nullptr;
         }
 
+        /**
+         * Check if a member is const.
+         * @tparam MemberType The type of the member.
+         * @param name The name of the member.
+         * @return True if the member is const, false otherwise.
+         */
         template <typename MemberType>
         bool is_member_const(std::string&& name) noexcept {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
@@ -193,6 +273,15 @@ namespace simple_reflection {
             return false;
         }
 
+        /**
+         * Find the desired member of a class.
+         * @note Returns @b nullptr if the member is not found or there's a type mismatch.
+         * @tparam MemberType The type of the member.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the member.
+         * @return The pointer to the member.
+         */
         template <typename MemberType, typename ClassType>
         MemberType* get_member_ref(ClassType* object, std::string&& name) noexcept {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
@@ -206,6 +295,15 @@ namespace simple_reflection {
             return nullptr;
         }
 
+        /**
+         * Find the desired const member of a class.
+         * @note Returns @b nullptr if the member is not found or there's a type mismatch.
+         * @tparam MemberType The type of the member.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the member.
+         * @return The pointer to the member.
+         */
         template <typename MemberType, typename ClassType>
         const MemberType* get_const_member_ref(ClassType* object, std::string&& name) noexcept {
             using type = typename remove_const<MemberType>::type;
@@ -220,6 +318,12 @@ namespace simple_reflection {
             return nullptr;
         }
 
+        /**
+         * Register a method of a class.
+         * @note For those methods which have multiple overloads, use another overload of register_method.
+         * @tparam Method The pointer to the method.
+         * @param name The name of the method.
+         */
         template <auto Method>
         ReflectionBase& register_method(std::string&& name) {
             constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
@@ -239,6 +343,17 @@ namespace simple_reflection {
             return *this;
         }
 
+        /**
+         * Register a method of a class.
+         * @note This is the overload for those methods which have multiple overloads.
+         * @note You need to designate the types of the method manually.
+         * @note So if you don't want to do it manually, while your method has no overloads,
+         * @note feel free to use the other overload of register_method.
+         * @tparam ClassType The type of the class.
+         * @tparam ReturnType The return type of the method.
+         * @tparam ArgTypes The argument types of the method.
+         * @param name The name of the method.
+         */
         template <
             typename ClassType,
             typename ReturnType,
@@ -263,6 +378,17 @@ namespace simple_reflection {
             return *this;
         }
 
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ReturnType The return type of the method.
+         * @tparam ClassType The type of the class.
+         * @tparam ArgTypes The argument types of the method.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @param args The arguments of the method.
+         * @return The return value of the method.
+         */
         template <
             typename ReturnType,
             typename ClassType,
@@ -279,9 +405,18 @@ namespace simple_reflection {
                     }
                 }
             }
-            throw std::exception();
+            throw method_not_found_exception(name);
         }
 
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ReturnType The return type of the method.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @return The return value of the method.
+         */
         template <typename ReturnType, typename ClassType>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
@@ -293,9 +428,17 @@ namespace simple_reflection {
                     }
                 }
             }
-            throw std::exception();
+            throw method_not_found_exception(name);
         }
 
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @return The return value of the method.
+         */
         template <typename ClassType>
         void invoke_method(ClassType& object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
@@ -304,12 +447,23 @@ namespace simple_reflection {
                     if (can_cast_to<std::function<void(void*)>>(fn.method)) {
                         auto method = std::any_cast<std::function<void(void*)>>(fn.method);
                         method(&object);
+                        return;
                     }
                 }
             }
-            throw std::exception();
+            throw method_not_found_exception(name);
         }
 
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ClassType The type of the class.
+         * @tparam ArgTypes The argument types of the method.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @param args The arguments of the method.
+         * @return The return value of the method.
+         */
         template <typename ClassType, typename... ArgTypes>
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
@@ -322,22 +476,37 @@ namespace simple_reflection {
                     }
                 }
             }
-            throw std::exception();
+            throw method_not_found_exception(name);
         }
 
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ArgTypes The argument types of the method.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @param args The arguments of the method.
+         * @return The return value of the method.
+         */
         template <typename... ArgTypes>
         void invoke_method(void* object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn : fn_overloads) {
-                    if (auto wrapper = std::any_cast<MethodWrapper>(fn); can_cast_to<void(void*, ArgTypes...)>(wrapper.method)) {
-                        auto method = std::any_cast<void(void*, ArgTypes...)>(wrapper.method);
+                    if (can_cast_to<void(void*, ArgTypes...)>(fn.method)) {
+                        auto method = std::any_cast<void(void*, ArgTypes...)>(fn.method);
                         return (method)(object, std::forward<ArgTypes>(args)...);
                     }
                 }
             }
+            throw method_not_found_exception(name);
         }
 
+        /**
+         * Check if a method is const.
+         * @param name The name of the method.
+         * @return True if the method is const, false otherwise.
+         */
         bool is_method_const(std::string&& name) noexcept {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 try {
