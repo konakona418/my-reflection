@@ -3,6 +3,9 @@ project(my_reflection)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(my_reflection main.cpp
-        simple_refl.h
-        test_helper.h)
+file(GLOB_RECURSE INCLUDE "${CMAKE_SOURCE_DIR}/include/*.h")
+include_directories("${CMAKE_SOURCE_DIR}/include")
+
+file(GLOB_RECURSE TESTS "${CMAKE_SOURCE_DIR}/test/*.h")
+
+add_executable(my_reflection main.cpp ${INCLUDE} ${TESTS})

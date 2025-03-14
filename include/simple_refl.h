@@ -14,6 +14,7 @@
 #include <exception>
 #include <utility>
 #include <vector>
+#include <functional>
 
 /** Simple Reflection Library. */
 namespace simple_reflection {
@@ -89,6 +90,13 @@ namespace simple_reflection {
     using remove_const_t = typename remove_const<TypeName>::type;
 
     /**
+     * Remove cvref from a type.
+     * @tparam FullName The type to remove cvref from.
+     */
+    template <typename FullName>
+    using remove_cvref_t = std::remove_const_t<std::remove_reference_t<FullName>>;
+
+    /**
      * Check if a method has const suffix.
      * @tparam FullName The full name of the method.
      */
@@ -139,12 +147,13 @@ namespace simple_reflection {
 
     class method_not_found_exception final : public std::exception {
         std::string method_name;
+
     public:
         explicit method_not_found_exception(std::string method_name) : method_name(std::move(method_name)) {
         }
 
         [[nodiscard]] const char* what() const noexcept override {
-            return ("Method \"" + method_name + "\" not found").c_str();
+            return ("Method \"" + method_name + "\" not found, or the signature mismatched.").c_str();
         }
     };
 
@@ -168,14 +177,14 @@ namespace simple_reflection {
     /**
      * A struct to represent a method of a class.
      */
-    struct MethodWrapper {
+    struct CallableWrapper {
         std::any method;
         bool is_const = false;
 
-        explicit MethodWrapper(std::any method) : method(std::move(method)) {
+        explicit CallableWrapper(std::any method) : method(std::move(method)) {
         }
 
-        explicit MethodWrapper(std::any method, const bool is_const) : method(std::move(method)), is_const(is_const) {
+        explicit CallableWrapper(std::any method, const bool is_const) : method(std::move(method)), is_const(is_const) {
         }
     };
 
@@ -184,10 +193,10 @@ namespace simple_reflection {
      */
     class ReflectionBase {
         std::unordered_map<std::string, std::any> m_offsets = {};
-        std::unordered_map<std::string, std::pmr::vector<MethodWrapper>> m_funcs = {};
+        std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
-        std::any _parse_method(ReturnType(ClassType::*Method)(ArgTypes...)) {
+        std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {
             std::function<ReturnType(void*, ArgTypes...)> fn = [Method](void* object, ArgTypes... args) {
                 return (static_cast<ClassType *>(object)->*Method)(std::forward<ArgTypes>(args)...);
             };
@@ -195,13 +204,12 @@ namespace simple_reflection {
         }
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
-        std::any _parse_method_const(ReturnType(ClassType::*Method)(ArgTypes...) const) {
+        std::any _parse_method_const(ReturnType (ClassType::*Method)(ArgTypes...) const) {
             std::function<ReturnType(void*, ArgTypes...)> fn = [Method](void* object, ArgTypes... args) {
                 return (static_cast<ClassType *>(object)->*Method)(std::forward<ArgTypes>(args)...);
             };
             return std::any(std::move(fn));
         }
-
 
     public:
         ReflectionBase() = default;
@@ -226,11 +234,22 @@ namespace simple_reflection {
             return *this;
         }
 
+        template <
+            typename ReturnType, typename... ArgTypes, typename CallableType,
+            std::enable_if_t<std::is_convertible_v<CallableType, std::function<ReturnType(ArgTypes...)>>, bool>  = false
+        >
+        ReflectionBase& register_function(std::string&& name, CallableType callable) {
+            auto fn = static_cast<std::function<ReturnType(remove_cvref_t<ArgTypes>&&...)>>(std::move(callable));
+            m_funcs[name].push_back(CallableWrapper(fn));
+            return *this;
+        }
+
         /**
          * Find the desired member of a class.
          * @note Returns @b nullptr if the member is not found or there's a type mismatch.
          * @tparam MemberType The pointer to the method.
          * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
          * @param name The name of the method.
          */
         template <typename MemberType, typename ClassType>
@@ -250,7 +269,6 @@ namespace simple_reflection {
         template <typename MemberType, typename ClassType>
         const MemberType* get_const_member_ref(ClassType& object, std::string&& name) noexcept {
             return get_const_member_ref<MemberType, ClassType>(&object, std::move(name));
-            return nullptr;
         }
 
         /**
@@ -328,7 +346,7 @@ namespace simple_reflection {
         ReflectionBase& register_method(std::string&& name) {
             constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
             if (m_funcs.find(name) == m_funcs.end()) {
-                m_funcs[name] = std::pmr::vector<MethodWrapper>();
+                m_funcs[name] = std::pmr::vector<CallableWrapper>();
             }
 
             std::any parsed;
@@ -358,12 +376,12 @@ namespace simple_reflection {
             typename ClassType,
             typename ReturnType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ClassType>, bool> = false
+            std::enable_if_t<!std::is_void_v<ClassType>, bool>  = false
         >
-        ReflectionBase& register_method(std::string&& name, ReturnType(ClassType::*Method)(ArgTypes...)) {
+        ReflectionBase& register_method(std::string&& name, ReturnType (ClassType::*Method)(ArgTypes...)) {
             constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
             if (m_funcs.find(name) == m_funcs.end()) {
-                m_funcs[name] = std::pmr::vector<MethodWrapper>();
+                m_funcs[name] = std::pmr::vector<CallableWrapper>();
             }
 
             std::any parsed;
@@ -393,11 +411,12 @@ namespace simple_reflection {
             typename ReturnType,
             typename ClassType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                return invoke_method<ReturnType>(&object, std::forward<std::string>(name), std::forward<ArgTypes>(args)...);
+                return invoke_method<ReturnType>(&object, std::forward<std::string>(name),
+                                                 std::forward<ArgTypes>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -472,12 +491,12 @@ namespace simple_reflection {
             typename ReturnType,
             typename ClassType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
         >
         ReturnType invoke_method(ClassType* object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
-                for (auto& fn : fn_overloads) {
+                for (auto& fn: fn_overloads) {
                     if (can_cast_to<std::function<ReturnType(void*, ArgTypes...)>>(fn.method)) {
                         const auto method = std::any_cast<std::function<ReturnType(void*, ArgTypes...)>>(fn.method);
                         return method(object, std::forward<ArgTypes>(args)...);
@@ -500,7 +519,7 @@ namespace simple_reflection {
         ReturnType invoke_method(ClassType* object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
-                for (auto& fn : fn_overloads) {
+                for (auto& fn: fn_overloads) {
                     if (can_cast_to<std::function<ReturnType(void*)>>(fn.method)) {
                         const auto method = std::any_cast<std::function<ReturnType(void*)>>(fn.method);
                         return method(object);
@@ -522,7 +541,7 @@ namespace simple_reflection {
         void invoke_method(ClassType* object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
-                for (auto& fn : fn_overloads) {
+                for (auto& fn: fn_overloads) {
                     if (can_cast_to<std::function<void(void*)>>(fn.method)) {
                         const auto method = std::any_cast<std::function<void(void*)>>(fn.method);
                         method(object);
@@ -547,7 +566,7 @@ namespace simple_reflection {
         void invoke_method(ClassType* object, std::string&& name, ArgTypes&&... args) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
-                for (auto& fn : fn_overloads) {
+                for (auto& fn: fn_overloads) {
                     if (can_cast_to<std::function<void(void*, ArgTypes...)>>(fn.method)) {
                         const auto method = std::any_cast<std::function<void(void*, ArgTypes...)>>(fn.method);
                         method(object, std::forward<ArgTypes>(args)...);
@@ -567,7 +586,7 @@ namespace simple_reflection {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 try {
                     const auto overloads = find->second;
-                    for (auto& fn : overloads) {
+                    for (auto& fn: overloads) {
                         if (fn.is_const) {
                             return true;
                         }
@@ -577,6 +596,38 @@ namespace simple_reflection {
                 }
             }
             return false;
+        }
+
+        /**
+         * Invoke a function.
+         * @exception method_not_found_exception If the function is not found, or the function signature mismatched.
+         * @note When calling, the types must perfectly match the function signature.
+         * @note For instance, when the type of the function is `float(double, double)`,
+         * @note although double can be converted to float,
+         * @note you still can't use `invoke_function("func", 1.0f, 1.0f)` to call the original function.
+         * @note However, the `const` `volatile` qualifiers, and reference qualifiers are ignored.
+         * @tparam ReturnType The return type of the function.
+         * @tparam ArgTypes The argument types of the function.
+         * @param name The name of the function.
+         * @param args The arguments of the function.
+         * @return The return value of the function.
+         */
+        template <
+            typename ReturnType, typename... ArgTypes,
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
+        >
+        ReturnType invoke_function(std::string&& name, ArgTypes... args) {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn_overloads = find->second;
+                for (auto& fn: fn_overloads) {
+                    if (can_cast_to<std::function<ReturnType(remove_cvref_t<ArgTypes>&&...)>>(fn.method)) {
+                        const auto function = std::any_cast<std::function<ReturnType(remove_cvref_t<ArgTypes>&&...)>>(
+                            fn.method);
+                        return function(std::forward<ArgTypes>(args)...);
+                    }
+                }
+            }
+            throw method_not_found_exception(name);
         }
 
         template <typename ClassType, std::enable_if_t<std::is_default_constructible_v<ClassType>, bool>  = false>

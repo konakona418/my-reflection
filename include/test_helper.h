@@ -5,6 +5,8 @@
 #ifndef TEST_HELPER_H
 #define TEST_HELPER_H
 
+#include <cassert>
+
 namespace test_helper {
 #define begin_test(test_name) \
     std::cout << "begin test: " << test_name << std::endl; \
