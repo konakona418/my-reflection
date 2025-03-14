@@ -197,16 +197,18 @@ namespace simple_reflection {
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {
-            std::function<ReturnType(void*, ArgTypes...)> fn = [Method](void* object, ArgTypes... args) {
-                return (static_cast<ClassType *>(object)->*Method)(std::forward<ArgTypes>(args)...);
+            std::function<ReturnType(void*, remove_cvref_t<ArgTypes>&&...)> fn =
+                    [Method](void* object, remove_cvref_t<ArgTypes>&&... args) {
+                return (static_cast<ClassType *>(object)->*Method)(std::forward<remove_cvref_t<ArgTypes>>(args)...);
             };
             return std::any(std::move(fn));
         }
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method_const(ReturnType (ClassType::*Method)(ArgTypes...) const) {
-            std::function<ReturnType(void*, ArgTypes...)> fn = [Method](void* object, ArgTypes... args) {
-                return (static_cast<ClassType *>(object)->*Method)(std::forward<ArgTypes>(args)...);
+            std::function<ReturnType(void*, remove_cvref_t<ArgTypes>&&...)> fn =
+                    [Method](void* object, remove_cvref_t<ArgTypes>&&... args) {
+                return (static_cast<ClassType *>(object)->*Method)(std::forward<remove_cvref_t<ArgTypes>>(args)...);
             };
             return std::any(std::move(fn));
         }
@@ -415,8 +417,9 @@ namespace simple_reflection {
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                return invoke_method<ReturnType, ClassType, ArgTypes...>(&object, std::forward<std::string>(name),
-                                                 std::forward<ArgTypes>(args)...);
+                return invoke_method<ReturnType, ClassType, remove_cvref_t<ArgTypes>...>(
+                    &object, std::forward<std::string>(name),
+                    std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -470,7 +473,8 @@ namespace simple_reflection {
         template <typename ClassType, typename... ArgTypes>
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                invoke_method<ClassType, ArgTypes...>(&object, std::forward<std::string>(name), std::forward<ArgTypes>(args)...);
+                invoke_method<ClassType, ArgTypes...>(&object, std::forward<std::string>(name),
+                                                      std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -497,9 +501,10 @@ namespace simple_reflection {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
-                    if (can_cast_to<std::function<ReturnType(void*, ArgTypes...)>>(fn.method)) {
-                        const auto method = std::any_cast<std::function<ReturnType(void*, ArgTypes...)>>(fn.method);
-                        return method(object, std::forward<ArgTypes>(args)...);
+                    if (can_cast_to<std::function<ReturnType(void*, remove_cvref_t<ArgTypes>&&...)>>(fn.method)) {
+                        const auto method = std::any_cast<std::function<ReturnType
+                            (void*, remove_cvref_t<ArgTypes>&&...)>>(fn.method);
+                        return method(object, std::forward<remove_cvref_t<ArgTypes>>(args)...);
                     }
                 }
             }
@@ -567,9 +572,10 @@ namespace simple_reflection {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
-                    if (can_cast_to<std::function<void(void*, ArgTypes...)>>(fn.method)) {
-                        const auto method = std::any_cast<std::function<void(void*, ArgTypes...)>>(fn.method);
-                        method(object, std::forward<ArgTypes>(args)...);
+                    if (can_cast_to<std::function<void(void*, remove_cvref_t<ArgTypes>&&...)>>(fn.method)) {
+                        const auto method = std::any_cast<std::function<void(void*, remove_cvref_t<ArgTypes>&&...)>>(
+                            fn.method);
+                        method(object, std::forward<remove_cvref_t<ArgTypes>>(args)...);
                         return;
                     }
                 }
