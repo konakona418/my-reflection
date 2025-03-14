@@ -1,38 +1,31 @@
 #include <cassert>
 #include <iostream>
 #include <cmath>
+#include <functional>
 
 #include "simple_refl.h"
-
-#define begin_test(test_name) \
-    std::cout << "begin test: " << test_name << std::endl; \
-    do {\
-    int _test_count = 0; \
-    int _test_passed = 0;
-
-#define test(fn) \
-    _test_count++;\
-    try { \
-        std::cout << "testing: " << #fn << std::endl; \
-        fn(); \
-        std::cout << "test passed" << std::endl << std::endl;\
-        _test_passed++;\
-    } catch (const std::exception& e) { \
-        std::cout << "test failed: " << e.what() << std::endl << std::endl; \
-    }
-
-#define end_test() \
-    std::cout << "test count: " << _test_count << std::endl; \
-    std::cout << "test passed: " << _test_passed << std::endl; \
-    std::cout << "test failed: " << _test_count - _test_passed << std::endl << std::endl; \
-    assert(_test_passed == _test_count);\
-    } while (false);
+#include "test_helper.h"
 
 namespace helper_tests {
     void test_can_cast_to() {
         std::any x = static_cast<float>(3.14);
         assert(simple_reflection::can_cast_to<float>(x));
         assert(!simple_reflection::can_cast_to<int>(x));
+    }
+
+    void test_function_cast() {
+        class Vector3 {
+            float x, y, z;
+        public:
+            Vector3(float x, float y, float z) : x(x), y(y), z(z) {
+            }
+
+            float get_x() {
+                return x;
+            }
+        };
+        auto fn = std::function<float(Vector3*)>(&Vector3::get_x);
+        assert(simple_reflection::can_cast_to<float(void*)>(fn));
     }
 }
 
@@ -149,13 +142,13 @@ namespace tests {
     void test_member_is_const() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
 
-        assert(refl.is_member_const<int>(vec, "k_placeholder"));
-        assert(refl.is_member_const<const int>(vec, "k_placeholder"));
-        assert(!refl.is_member_const<char>(vec, "k_placeholder"));
+        assert(refl.is_member_const<int>("k_placeholder"));
+        assert(refl.is_member_const<const int>("k_placeholder"));
+        assert(!refl.is_member_const<char>("k_placeholder"));
 
-        assert(!refl.is_member_const<float>(vec, "x"));
-        assert(!refl.is_member_const<const float>(vec, "x"));
-        assert(!refl.is_member_const<int>(vec, "x"));
+        assert(!refl.is_member_const<float>( "x"));
+        assert(!refl.is_member_const<const float>("x"));
+        assert(!refl.is_member_const<int>( "x"));
     }
 
     void test_default_ctor_invocation() {
@@ -171,7 +164,7 @@ namespace tests {
     }
 
     void test_method_no_ret_no_param() {
-        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        auto vec = static_cast<Vector3>(Vector3(1.0f, 2.0f, 3.0f));
 
         refl.invoke_method<void>(vec, "add_x_by_1");
         std::cout << vec.x << std::endl;
@@ -188,7 +181,7 @@ namespace tests {
     void test_method_has_ret_no_param() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
 
-        auto len = refl.invoke_const_method<float>(vec, "len");
+        auto len = refl.invoke_method<float>(vec, "len");
         std::cout << len << std::endl;
         assert(std::round(len) == 4);
     }
@@ -212,14 +205,14 @@ namespace tests {
 
     void test_const_method() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
-        assert(std::round(refl.invoke_const_method<float>(vec, "len")) == 4.0f);
+        assert(std::round(refl.invoke_method<float>(vec, "len")) == 4.0f);
     }
 
     void test_method_is_const() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
 
-        assert(refl.is_method_const(vec, "len"));
-        assert(!refl.is_method_const(vec, "add_x_by_1"));
+        assert(refl.is_method_const("len"));
+        assert(!refl.is_method_const("add_x_by_1"));
     }
 
     void test_method_overload() {
@@ -274,13 +267,14 @@ namespace generic_tests {
 
     void test_invocation() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
-        assert(std::round(refl.invoke_const_method<float>(vec, "len")) == 4.0f);
+        assert(std::round(refl.invoke_method<float>(vec, "len")) == 4.0f);
     }
 }
 
 int main() {
     begin_test("helpers") {
         test(helper_tests::test_can_cast_to);
+        // test(helper_tests::test_function_cast);
     } end_test()
 
     begin_test("basic") {
