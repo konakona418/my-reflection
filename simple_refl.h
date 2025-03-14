@@ -396,12 +396,91 @@ namespace simple_reflection {
             std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
+            try {
+                return invoke_method<ReturnType>(&object, std::forward<std::string>(name), std::forward<ArgTypes>(args)...);
+            } catch (const method_not_found_exception&) {
+                throw method_not_found_exception(name);
+            }
+        }
+
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ReturnType The return type of the method.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @return The return value of the method.
+         */
+        template <typename ReturnType, typename ClassType>
+        ReturnType invoke_method(ClassType& object, std::string&& name) {
+            try {
+                return invoke_method<ReturnType>(&object, std::forward<std::string>(name));
+            } catch (const method_not_found_exception&) {
+                throw method_not_found_exception(name);
+            }
+        }
+
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ClassType The type of the class.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @return The return value of the method.
+         */
+        template <typename ClassType>
+        void invoke_method(ClassType& object, std::string&& name) {
+            try {
+                invoke_method(&object, std::forward<std::string>(name));
+            } catch (const method_not_found_exception&) {
+                throw method_not_found_exception(name);
+            }
+        }
+
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ClassType The type of the class.
+         * @tparam ArgTypes The argument types of the method.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @param args The arguments of the method.
+         * @return The return value of the method.
+         */
+        template <typename ClassType, typename... ArgTypes>
+        void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
+            try {
+                invoke_method(&object, std::forward<std::string>(name), std::forward<ArgTypes>(args)...);
+            } catch (const method_not_found_exception&) {
+                throw method_not_found_exception(name);
+            }
+        }
+
+        /**
+         * Invoke a method of a class.
+         * @exception method_not_found_exception If the method is not found.
+         * @tparam ReturnType The return type of the method.
+         * @tparam ClassType The type of the class.
+         * @tparam ArgTypes The argument types of the method.
+         * @param object The pointer to the object.
+         * @param name The name of the method.
+         * @param args The arguments of the method.
+         * @return The return value of the method.
+         */
+        template <
+            typename ReturnType,
+            typename ClassType,
+            typename... ArgTypes,
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false
+        >
+        ReturnType invoke_method(ClassType* object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn : fn_overloads) {
                     if (can_cast_to<std::function<ReturnType(void*, ArgTypes...)>>(fn.method)) {
-                        auto method = std::any_cast<std::function<ReturnType(void*, ArgTypes...)>>(fn.method);
-                        return method(&object, std::forward<ArgTypes>(args)...);
+                        const auto method = std::any_cast<std::function<ReturnType(void*, ArgTypes...)>>(fn.method);
+                        return method(object, std::forward<ArgTypes>(args)...);
                     }
                 }
             }
@@ -418,13 +497,13 @@ namespace simple_reflection {
          * @return The return value of the method.
          */
         template <typename ReturnType, typename ClassType>
-        ReturnType invoke_method(ClassType& object, std::string&& name) {
+        ReturnType invoke_method(ClassType* object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn : fn_overloads) {
                     if (can_cast_to<std::function<ReturnType(void*)>>(fn.method)) {
-                        auto method = std::any_cast<std::function<ReturnType(void*)>>(fn.method);
-                        return method(&object);
+                        const auto method = std::any_cast<std::function<ReturnType(void*)>>(fn.method);
+                        return method(object);
                     }
                 }
             }
@@ -440,13 +519,13 @@ namespace simple_reflection {
          * @return The return value of the method.
          */
         template <typename ClassType>
-        void invoke_method(ClassType& object, std::string&& name) {
+        void invoke_method(ClassType* object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn : fn_overloads) {
                     if (can_cast_to<std::function<void(void*)>>(fn.method)) {
-                        auto method = std::any_cast<std::function<void(void*)>>(fn.method);
-                        method(&object);
+                        const auto method = std::any_cast<std::function<void(void*)>>(fn.method);
+                        method(object);
                         return;
                     }
                 }
@@ -465,37 +544,14 @@ namespace simple_reflection {
          * @return The return value of the method.
          */
         template <typename ClassType, typename... ArgTypes>
-        void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
+        void invoke_method(ClassType* object, std::string&& name, ArgTypes&&... args) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn : fn_overloads) {
                     if (can_cast_to<std::function<void(void*, ArgTypes...)>>(fn.method)) {
-                        auto method = std::any_cast<std::function<void(void*, ArgTypes...)>>(fn.method);
-                        method(&object, std::forward<ArgTypes>(args)...);
+                        const auto method = std::any_cast<std::function<void(void*, ArgTypes...)>>(fn.method);
+                        method(object, std::forward<ArgTypes>(args)...);
                         return;
-                    }
-                }
-            }
-            throw method_not_found_exception(name);
-        }
-
-        /**
-         * Invoke a method of a class.
-         * @exception method_not_found_exception If the method is not found.
-         * @tparam ArgTypes The argument types of the method.
-         * @param object The pointer to the object.
-         * @param name The name of the method.
-         * @param args The arguments of the method.
-         * @return The return value of the method.
-         */
-        template <typename... ArgTypes>
-        void invoke_method(void* object, std::string&& name, ArgTypes&&... args) {
-            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
-                auto fn_overloads = find->second;
-                for (auto& fn : fn_overloads) {
-                    if (can_cast_to<void(void*, ArgTypes...)>(fn.method)) {
-                        auto method = std::any_cast<void(void*, ArgTypes...)>(fn.method);
-                        return (method)(object, std::forward<ArgTypes>(args)...);
                     }
                 }
             }
