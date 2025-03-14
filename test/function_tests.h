@@ -30,13 +30,16 @@ namespace function_tests {
             .register_member<&Vector3::x>("x")
             .register_member<&Vector3::y>("y")
             .register_member<&Vector3::z>("z")
-            .register_function<Vector3, const Vector3&, const Vector3&>("operator+",
-                                                                        [](const Vector3& lhs, const Vector3& rhs) {
-                                                                            return lhs + rhs;
-                                                                        })
-            .register_function<Vector3, float, float, float>("ctor", [](float x, float y, float z) {
-                return Vector3(x, y, z);
-            })
+            .register_function<Vector3, const Vector3&, const Vector3&>(
+                "operator+",
+                [](const Vector3& lhs, const Vector3& rhs) {
+                    return lhs + rhs;
+                })
+            .register_function<Vector3, float, float, float>(
+                "ctor",
+                [](float x, float y, float z) {
+                    return Vector3(x, y, z);
+                })
             .register_function<Vector3>("ctor", []() {
                 return Vector3();
             });
