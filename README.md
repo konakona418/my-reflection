@@ -1,13 +1,14 @@
 # my-reflection
 
-This is a tiny C++ library which provides a simple reflection API.
+This is a tiny C++ library which provides a set of simple reflection APIs.
 
-This project is mainly made for me to learn template usage, and relies heavily on them,
+This project is mainly made to practice template usage, and while it relies heavily on templates,
 which lacks stability and readability guarantees,
 so I don't think it's a good idea to use it in production.
 
-The development is still under progress, so the API might change in the future.
-However, due to heavy schoolwork, I guess I will have limited time to work on this project. 😭
+The development is still in progress, so the APIs might change in the future.
+
+Due to heavy schoolwork, I guess I will have limited time to work on this project. 😭
 
 >
 > I guess some might argue that this is not reflection.

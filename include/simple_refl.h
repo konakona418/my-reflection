@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #include <functional>
+#include <sstream>
 
 /** Simple Reflection Library. */
 namespace simple_reflection {
@@ -153,7 +154,10 @@ namespace simple_reflection {
         }
 
         [[nodiscard]] const char* what() const noexcept override {
-            return ("Method \"" + method_name + "\" not found, or the signature mismatched.").c_str();
+            std::stringstream ss;
+            ss << "Method \"" << method_name << "\" not found, or the signature mismatched.";
+            std::cerr << ss.str() << std::endl;
+            return ss.str().c_str();
         }
     };
 
