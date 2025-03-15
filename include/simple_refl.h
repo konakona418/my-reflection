@@ -26,29 +26,6 @@
 #include <variant>
 #endif
 
-#ifndef SIMPLE_REFL_MACROS
-#define SIMPLE_REFL_MACROS
-
-/**
- * Internal helper macro. Wrap a single argument.
- * @param _arg The argument to wrap.
- */
-#define _simple_refl_wrap_arg_helper(_arg, ...)\
-static_cast<void*>(&_arg),
-
-/**
- * Helper macro. Wrap a list of arguments.
- * For instance, wrap_arg_list(x, y, z) will expand to
- * { static_cast<void*>(&x), static_cast<void*>(&y), static_cast<void*>(&z), },
- * which can be assigned to a void*[] later.
- * @param _arg The argument to wrap.
- * @param ... The rest of the arguments to wrap.
- */
-#define refl_args(_arg, ...) \
-{ static_cast<void*>(&_arg), _simple_refl_wrap_arg_helper(__VA_ARGS__) }
-
-#endif // SIMPLE_REFL_MACROS
-
 /** Simple Reflection Library. */
 namespace simple_reflection {
     template <typename FullName>
@@ -193,6 +170,54 @@ namespace simple_reflection {
         }
     };
 
+    using RawArg = void*;
+    using RawArgList = RawArg*;
+
+    struct ArgList {
+        RawArgList args;
+        size_t size;
+
+        ArgList(RawArgList args, size_t size) : args(args), size(size) {
+            this->size = size;
+        }
+
+        ArgList(const ArgList&) = delete;
+
+        ArgList(ArgList&&) = default;
+
+        ~ArgList() {
+            delete[] args;
+        }
+
+        [[nodiscard]] RawArgList get() const& {
+            return args;
+        }
+
+        /**
+         * This is to prevent calling the get() method on rvalue reference.
+         * If not doing so, under certain circumstances, the RawArgList can be invalidated but used afterward.
+         * To be specific, the destructor can be, though not always, called right after the get() method,
+         * if we don't prevent it.
+         */
+        [[nodiscard]] RawArgList get() const&& = delete;
+    };
+
+    template <size_t I = 0, typename... Args>
+    constexpr void assign_raw_args(RawArgList indices, std::tuple<Args...> args) {
+        if constexpr (I < sizeof...(Args)) {
+            indices[I] = std::get<I>(args);
+            assign_raw_args<I + 1>(indices, args);
+        }
+    }
+
+    template <typename... ArgTypes>
+    ArgList refl_args(ArgTypes&&... args) {
+        auto arg_tuple = std::make_tuple(std::addressof(args)...);
+        auto arg_list = new RawArg[sizeof...(ArgTypes)];
+        assign_raw_args(arg_list, arg_tuple);
+        return {arg_list, sizeof...(ArgTypes)};
+    }
+
     /**
      * A struct to represent a member of a class.
      * @tparam MemberType The type of the member.
@@ -278,12 +303,12 @@ namespace simple_reflection {
     // wtf is this!?
     template <typename ReturnType, typename ClassType, typename... ArgTypes, size_t... Indices>
     auto wrap_method_impl(ReturnType (ClassType::*method)(ArgTypes...), std::index_sequence<Indices...>) {
-        return std::function<ReturnValueProxy (void*, void** args)>(
+        return std::function<ReturnValueProxy (void*, RawArgList args)>(
             // here we use a lambda function to wrap the method,
             // the lambda takes a void* object and a void** args,
             // the void* is the pointer to the object, whose method is about to be invoked,
             // while the void** args is the array of arguments.
-            [method](void* object, void** args) -> ReturnValueProxy {
+            [method](void* object, RawArgList args) -> ReturnValueProxy {
                 // cast the void* object to the correct type.
                 auto cls = static_cast<ClassType *>(object);
                 // invoke the method, and return the result.
