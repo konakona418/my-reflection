@@ -18,6 +18,30 @@
 #include <functional>
 #include <memory>
 #include <sstream>
+#include <variant>
+
+#ifndef SIMPLE_REFL_MACROS
+#define SIMPLE_REFL_MACROS
+
+/**
+ * Internal helper macro. Wrap a single argument.
+ * @param _arg The argument to wrap.
+ */
+#define _simple_refl_wrap_arg_helper(_arg, ...)\
+static_cast<void*>(&_arg),
+
+/**
+ * Helper macro. Wrap a list of arguments.
+ * For instance, wrap_arg_list(x, y, z) will expand to
+ * { static_cast<void*>(&x), static_cast<void*>(&y), static_cast<void*>(&z), },
+ * which can be assigned to a void*[] later.
+ * @param _arg The argument to wrap.
+ * @param ... The rest of the arguments to wrap.
+ */
+#define refl_args(_arg, ...) \
+{ static_cast<void*>(&_arg), _simple_refl_wrap_arg_helper(__VA_ARGS__) }
+
+#endif // SIMPLE_REFL_MACROS
 
 /** Simple Reflection Library. */
 namespace simple_reflection {
@@ -210,11 +234,39 @@ namespace simple_reflection {
         ValueType get() {
             return *static_cast<ValueType *>(this->ptr.get());
         }
+
+        [[nodiscard]] void* get_raw() const {
+            return this->ptr.get();
+        }
+    };
+
+    using CommonCallable = std::function<ReturnValueProxy (void*, void** args)>;
+
+    struct CallableWrapperNew {
+        CommonCallable callable;
+        const std::type_info& return_type;
+        std::vector<const std::type_info&> arg_types;
+        std::variant<const std::type_info&, std::monostate> parent_type;
+        bool is_const = false;
+
+        explicit CallableWrapperNew(
+            CommonCallable callable,
+            const std::type_info& return_type,
+            const std::vector<const std::type_info&>& arg_types,
+            const std::variant<const std::type_info&, std::monostate> parent_type,
+            bool is_const
+        ) : callable(std::move(callable)), return_type(return_type), arg_types(std::move(arg_types)),
+            parent_type(parent_type), is_const(is_const) {
+        }
+
+        ReturnValueProxy operator()(void* obj, void** args) const {
+            return callable(obj, args);
+        }
     };
 
     // wtf is this!?
     template <typename RetType, typename ClassType, typename... ArgTypes, size_t... Indices>
-    auto wrap_any_impl(RetType (ClassType::*method)(ArgTypes...), std::index_sequence<Indices...>) {
+    auto wrap_method_impl(RetType (ClassType::*method)(ArgTypes...), std::index_sequence<Indices...>) {
         return std::function<ReturnValueProxy (void*, void** args)>(
             // here we use a lambda function to wrap the method,
             // the lambda takes a void* object and a void** args,
@@ -252,8 +304,8 @@ namespace simple_reflection {
     }
 
     template <typename RetType, typename ClassType, typename... ArgTypes>
-    auto wrap_any(RetType (ClassType::*method)(ArgTypes...)) {
-        return wrap_any_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
+    auto wrap_method(RetType (ClassType::*method)(ArgTypes...)) {
+        return wrap_method_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
     /**

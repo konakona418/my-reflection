@@ -39,23 +39,32 @@ namespace helper_tests {
         float x, y;
         TestClass(float x, float y) : x(x), y(y) {
         }
-        float test_function(float x, float y, float z) {
+        float test_function(float x, float y) {
             this->x = x;
             this->y = y;
-            return x + y + z;
+            return x + y;
+        }
+        void test_void_function(float x, float y) {
+            this->x = x;
+            this->y = y;
         }
     };
 
     void any_wrapper_test() {
         TestClass test_class(0.0f, 0.0f);
-        auto x = simple_reflection::wrap_any(&TestClass::test_function);
+        auto x = simple_reflection::wrap_method(&TestClass::test_function);
         float a, b;
         a = 3.2f;
         b = 2.1f;
-        void* pack[] = {static_cast<void *>(&a), static_cast<void *>(&b)};
+        void* pack[] = refl_args(a, b);
         auto invoke_result = (x(&test_class, pack));
+
+        auto y = simple_reflection::wrap_method(&TestClass::test_void_function);
+        y(&test_class, pack);
         std::cout << invoke_result.get<float>() << std::endl;
         assert(invoke_result.get<float>() == 5.3f);
+        assert(test_class.x == 3.2f);
+        assert(test_class.y == 2.1f);
     }
 
     void run_tests() {
