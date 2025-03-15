@@ -7,6 +7,7 @@
 #ifndef SIMPLE_REFL_H
 #define SIMPLE_REFL_H
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <any>
@@ -15,6 +16,7 @@
 #include <utility>
 #include <vector>
 #include <functional>
+#include <memory>
 #include <sstream>
 
 /** Simple Reflection Library. */
@@ -173,7 +175,8 @@ namespace simple_reflection {
         explicit Member(const size_t offset, const std::type_info& type_info) : offset(offset), type_info(type_info) {
         }
 
-        Member(const size_t offset, const bool is_const, const std::type_info& type_info) : offset(offset), is_const(is_const), type_info(type_info) {
+        Member(const size_t offset, const bool is_const, const std::type_info& type_info) : offset(offset),
+            is_const(is_const), type_info(type_info) {
         }
     };
 
@@ -190,6 +193,64 @@ namespace simple_reflection {
         explicit CallableWrapper(std::any method, const bool is_const) : method(std::move(method)), is_const(is_const) {
         }
     };
+
+    class ReturnValueProxy {
+        std::shared_ptr<void> ptr;
+        size_t size;
+        const std::type_info& type_info;
+
+    public:
+        template <typename ValueType>
+        explicit ReturnValueProxy(ValueType&& ptr): type_info(typeid(ValueType)) {
+            this->ptr = std::make_shared<ValueType>(std::forward<ValueType>(ptr));
+            this->size = sizeof(ValueType);
+        }
+
+        template <typename ValueType>
+        ValueType get() {
+            return *static_cast<ValueType *>(this->ptr.get());
+        }
+    };
+
+    // wtf is this!?
+    template <typename RetType, typename ClassType, typename... ArgTypes, size_t... Indices>
+    auto wrap_any_impl(RetType (ClassType::*method)(ArgTypes...), std::index_sequence<Indices...>) {
+        return std::function<ReturnValueProxy (void*, void** args)>(
+            // here we use a lambda function to wrap the method,
+            // the lambda takes a void* object and a void** args,
+            // the void* is the pointer to the object, whose method is about to be invoked,
+            // while the void** args is the array of arguments.
+            [method](void* object, void** args) -> ReturnValueProxy {
+                // cast the void* object to the correct type.
+                auto cls = static_cast<ClassType *>(object);
+                // invoke the method, and return the result.
+                auto ret = (cls->*method)(
+                    // use std::forward to forward the arguments to the method.
+                    std::forward<remove_cvref_t<ArgTypes>>(
+                        // cast the void* to the correct type,
+                        // and then dereference it to get the value.
+                        *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
+                            // as mentioned above, the void** args is an array of pointers,
+                            // so here we use an offset to get the pointer to a specific argument.
+                            // and then dereference it to get the value.
+                            *(args + Indices)
+                        )
+                    )... // argument pack.
+                );
+                if constexpr (std::is_void_v<RetType>) {
+                    // if the return type is void, return a zero value, which is a nullptr.
+                    return ReturnValueProxy(0);
+                }
+                // return the result in the form of a ReturnValueProxy, which is a wrapper for the return value.
+                // type-erased, and can manage life cycle of the return value.
+                return ReturnValueProxy(std::move(ret));
+            });
+    }
+
+    template <typename RetType, typename ClassType, typename... ArgTypes>
+    auto wrap_any(RetType (ClassType::*method)(ArgTypes...)) {
+        return wrap_any_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
+    }
 
     /**
      * A class for reflection.
@@ -324,6 +385,12 @@ namespace simple_reflection {
             return nullptr;
         }
 
+        /**
+         * Provides direct access to the pointer of the desired member, with no type safety guarantees.
+         * @param object The pointer to the object.
+         * @param name The name of the member.
+         * @return The pointer to the member.
+         */
         void* get_member_ref(void* object, std::string&& name) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
@@ -354,6 +421,12 @@ namespace simple_reflection {
             return nullptr;
         }
 
+        /**
+         * Provides direct access to the desired const member of a class, with no type safety guarantees.
+         * @param object The pointer to the object.
+         * @param name The name of the member.
+         * @return The pointer to the member.
+         */
         const void* get_const_member_ref(const void* object, std::string&& name) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
@@ -458,7 +531,7 @@ namespace simple_reflection {
          * @param name The name of the method.
          * @return The return value of the method.
          */
-        template <typename ReturnType, typename ClassType, std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false>
+        template <typename ReturnType, typename ClassType, std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             try {
                 return invoke_method<ReturnType>(&object, std::forward<std::string>(name));
@@ -496,12 +569,12 @@ namespace simple_reflection {
          */
         template <
             typename ReturnType, typename ClassType, typename... ArgTypes,
-            std::enable_if_t<std::is_void_v<ReturnType>, bool> = false
+            std::enable_if_t<std::is_void_v<ReturnType>, bool>  = false
         >
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
                 invoke_method<void, ArgTypes...>(&object, std::forward<std::string>(name),
-                                           std::forward<remove_cvref_t<ArgTypes>>(args)...);
+                                                 std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -588,7 +661,8 @@ namespace simple_reflection {
          * @param args The arguments of the method.
          * @return The return value of the method.
          */
-        template <typename ReturnType, typename... ArgTypes, std::enable_if_t<std::is_void_v<ReturnType>, bool> = false>
+        template <typename ReturnType, typename... ArgTypes, std::enable_if_t<std::is_void_v<ReturnType>, bool>  =
+                false>
         void invoke_method(void* object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
