@@ -124,7 +124,6 @@ namespace basic_tests {
 
     void test_member_is_const() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
-
         assert(refl.is_member_const<int>("k_placeholder"));
         assert(refl.is_member_const<const int>("k_placeholder"));
         assert(!refl.is_member_const<char>("k_placeholder"));
@@ -156,7 +155,7 @@ namespace basic_tests {
 
     void test_method_no_ret_has_param() {
         auto vec = Vector3(1.0f, 2.0f, 3.0f);
-        refl.invoke_method(vec, "add_x", 1.0f);
+        refl.invoke_method<void>(vec, "add_x", 1.0f);
         std::cout << vec.x << std::endl;
         assert(vec.x == 2.0f);
     }

@@ -165,16 +165,15 @@ namespace simple_reflection {
      * A struct to represent a member of a class.
      * @tparam MemberType The type of the member.
      */
-    template <typename MemberType>
     struct Member {
-        using type = MemberType;
         size_t offset = 0;
         bool is_const = false;
+        const std::type_info& type_info;
 
-        explicit Member(const size_t offset) : offset(offset) {
+        explicit Member(const size_t offset, const std::type_info& type_info) : offset(offset), type_info(type_info) {
         }
 
-        Member(const size_t offset, const bool is_const) : offset(offset), is_const(is_const) {
+        Member(const size_t offset, const bool is_const, const std::type_info& type_info) : offset(offset), is_const(is_const), type_info(type_info) {
         }
     };
 
@@ -196,7 +195,7 @@ namespace simple_reflection {
      * A class for reflection.
      */
     class ReflectionBase {
-        std::unordered_map<std::string, std::any> m_offsets = {};
+        std::unordered_map<std::string, Member> m_offsets = {};
         std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
@@ -228,6 +227,7 @@ namespace simple_reflection {
         template <auto MemberPtr>
         ReflectionBase& register_member(std::string&& name) {
             using ClassType = extract_member_parent_t<decltype(MemberPtr)>;
+            using MemberType = extract_member_type_t<decltype(MemberPtr)>;
             const auto offset = reinterpret_cast<size_t>(
                 &(
                     static_cast<ClassType *>(nullptr)
@@ -235,7 +235,7 @@ namespace simple_reflection {
                 )
             );
             constexpr bool is_const = std::is_const_v<extract_member_type_t<decltype(MemberPtr)>>;
-            m_offsets[name] = Member<std::remove_const_t<extract_member_type_t<decltype(MemberPtr)>>>(offset, is_const);
+            m_offsets.emplace(std::move(name), Member(offset, is_const, typeid(MemberType)));
 
             return *this;
         }
@@ -286,13 +286,19 @@ namespace simple_reflection {
         template <typename MemberType>
         bool is_member_const(std::string&& name) noexcept {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                try {
-                    using type = remove_const_t<MemberType>;
-                    const Member<type> member = std::any_cast<Member<type>>(find->second);
-                    return member.is_const;
-                } catch (const std::bad_any_cast&) {
+                const Member& member = find->second;
+                if (member.type_info != typeid(MemberType)) {
                     return false;
                 }
+                return member.is_const;
+            }
+            return false;
+        }
+
+        bool is_member_const(std::string&& name) noexcept {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const Member& member = find->second;
+                return member.is_const;
             }
             return false;
         }
@@ -309,12 +315,19 @@ namespace simple_reflection {
         template <typename MemberType, typename ClassType>
         MemberType* get_member_ref(ClassType* object, std::string&& name) noexcept {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                try {
-                    const Member<MemberType> member = std::any_cast<Member<MemberType>>(find->second);
-                    return static_cast<MemberType *>(reinterpret_cast<void *>(object) + member.offset);
-                } catch (const std::bad_any_cast&) {
+                const auto& member = find->second;
+                if (member.type_info != typeid(MemberType)) {
                     return nullptr;
                 }
+                return static_cast<MemberType *>(reinterpret_cast<void *>(object) + member.offset);
+            }
+            return nullptr;
+        }
+
+        void* get_member_ref(void* object, std::string&& name) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                return object + member.offset;
             }
             return nullptr;
         }
@@ -332,12 +345,19 @@ namespace simple_reflection {
         const MemberType* get_const_member_ref(ClassType* object, std::string&& name) noexcept {
             using type = typename remove_const<MemberType>::type;
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                try {
-                    const Member<type> member = std::any_cast<Member<type>>(find->second);
-                    return static_cast<const type *>(reinterpret_cast<void *>(object) + member.offset);
-                } catch (const std::bad_any_cast&) {
+                const auto& member = find->second;
+                if (member.type_info != typeid(type)) {
                     return nullptr;
                 }
+                return static_cast<const type *>(reinterpret_cast<void *>(object) + member.offset);
+            }
+            return nullptr;
+        }
+
+        const void* get_const_member_ref(const void* object, std::string&& name) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                return object + member.offset;
             }
             return nullptr;
         }
@@ -421,7 +441,7 @@ namespace simple_reflection {
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                return invoke_method<ReturnType, ClassType, remove_cvref_t<ArgTypes>...>(
+                return invoke_method<ReturnType, remove_cvref_t<ArgTypes>...>(
                     &object, std::forward<std::string>(name),
                     std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
@@ -438,10 +458,10 @@ namespace simple_reflection {
          * @param name The name of the method.
          * @return The return value of the method.
          */
-        template <typename ReturnType, typename ClassType>
+        template <typename ReturnType, typename ClassType, std::enable_if_t<!std::is_void_v<ReturnType>, bool> = false>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             try {
-                return invoke_method<ReturnType, ClassType>(&object, std::forward<std::string>(name));
+                return invoke_method<ReturnType>(&object, std::forward<std::string>(name));
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -458,7 +478,7 @@ namespace simple_reflection {
         template <typename ClassType>
         void invoke_method(ClassType& object, std::string&& name) {
             try {
-                invoke_method<ClassType>(&object, std::forward<std::string>(name));
+                invoke_method(&object, std::forward<std::string>(name));
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -474,11 +494,14 @@ namespace simple_reflection {
          * @param args The arguments of the method.
          * @return The return value of the method.
          */
-        template <typename ClassType, typename... ArgTypes>
+        template <
+            typename ReturnType, typename ClassType, typename... ArgTypes,
+            std::enable_if_t<std::is_void_v<ReturnType>, bool> = false
+        >
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                invoke_method<ClassType, ArgTypes...>(&object, std::forward<std::string>(name),
-                                                      std::forward<remove_cvref_t<ArgTypes>>(args)...);
+                invoke_method<void, ArgTypes...>(&object, std::forward<std::string>(name),
+                                           std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -488,7 +511,6 @@ namespace simple_reflection {
          * Invoke a method of a class.
          * @exception method_not_found_exception If the method is not found.
          * @tparam ReturnType The return type of the method.
-         * @tparam ClassType The type of the class.
          * @tparam ArgTypes The argument types of the method.
          * @param object The pointer to the object.
          * @param name The name of the method.
@@ -497,11 +519,10 @@ namespace simple_reflection {
          */
         template <
             typename ReturnType,
-            typename ClassType,
             typename... ArgTypes,
             std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
         >
-        ReturnType invoke_method(ClassType* object, std::string&& name, ArgTypes&&... args) {
+        ReturnType invoke_method(void* object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
@@ -519,13 +540,12 @@ namespace simple_reflection {
          * Invoke a method of a class.
          * @exception method_not_found_exception If the method is not found.
          * @tparam ReturnType The return type of the method.
-         * @tparam ClassType The type of the class.
          * @param object The pointer to the object.
          * @param name The name of the method.
          * @return The return value of the method.
          */
-        template <typename ReturnType, typename ClassType>
-        ReturnType invoke_method(ClassType* object, std::string&& name) {
+        template <typename ReturnType>
+        ReturnType invoke_method(void* object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
@@ -541,13 +561,11 @@ namespace simple_reflection {
         /**
          * Invoke a method of a class.
          * @exception method_not_found_exception If the method is not found.
-         * @tparam ClassType The type of the class.
          * @param object The pointer to the object.
          * @param name The name of the method.
          * @return The return value of the method.
          */
-        template <typename ClassType>
-        void invoke_method(ClassType* object, std::string&& name) {
+        void invoke_method(void* object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
@@ -564,16 +582,15 @@ namespace simple_reflection {
         /**
          * Invoke a method of a class.
          * @exception method_not_found_exception If the method is not found.
-         * @tparam ClassType The type of the class.
          * @tparam ArgTypes The argument types of the method.
          * @param object The pointer to the object.
          * @param name The name of the method.
          * @param args The arguments of the method.
          * @return The return value of the method.
          */
-        template <typename ClassType, typename... ArgTypes>
-        void invoke_method(ClassType* object, std::string&& name, ArgTypes&&... args) {
-            if (auto find = m_funcs.find(name); find != m_funcs.end()) {
+        template <typename ReturnType, typename... ArgTypes, std::enable_if_t<std::is_void_v<ReturnType>, bool> = false>
+        void invoke_method(void* object, std::string&& name, ArgTypes&&... args) {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
                     if (can_cast_to<std::function<void(void*, remove_cvref_t<ArgTypes>&&...)>>(fn.method)) {
