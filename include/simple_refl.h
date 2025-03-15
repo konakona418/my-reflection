@@ -18,7 +18,13 @@
 #include <functional>
 #include <memory>
 #include <sstream>
+#include <typeindex>
+
+#define API_SET_OLD
+
+#ifdef API_SET_NEW
 #include <variant>
+#endif
 
 #ifndef SIMPLE_REFL_MACROS
 #define SIMPLE_REFL_MACROS
@@ -242,27 +248,32 @@ namespace simple_reflection {
 
     using CommonCallable = std::function<ReturnValueProxy (void*, void** args)>;
 
-    struct CallableWrapperNew {
+#ifdef API_SET_NEW
+    struct CallableWrapper {
         CommonCallable callable;
-        const std::type_info& return_type;
-        std::vector<const std::type_info&> arg_types;
-        std::variant<const std::type_info&, std::monostate> parent_type;
+        std::type_index return_type;
+        std::vector<std::type_index> arg_types;
+        std::variant<std::type_index, std::monostate> parent_type;
         bool is_const = false;
 
-        explicit CallableWrapperNew(
-            CommonCallable callable,
-            const std::type_info& return_type,
-            const std::vector<const std::type_info&>& arg_types,
-            const std::variant<const std::type_info&, std::monostate> parent_type,
-            bool is_const
-        ) : callable(std::move(callable)), return_type(return_type), arg_types(std::move(arg_types)),
-            parent_type(parent_type), is_const(is_const) {
+        CallableWrapper(
+                CommonCallable callable,
+                std::type_index return_type,
+                std::vector<std::type_index>&& arg_types,
+                std::variant<std::type_index, std::monostate> parent_type,
+                bool is_const = false
+        ) : callable(std::move(callable)),
+            return_type(return_type),
+            arg_types(std::move(arg_types)),
+            parent_type(parent_type),
+            is_const(is_const) {
         }
 
         ReturnValueProxy operator()(void* obj, void** args) const {
             return callable(obj, args);
         }
     };
+#endif
 
     // wtf is this!?
     template <typename RetType, typename ClassType, typename... ArgTypes, size_t... Indices>
@@ -308,12 +319,26 @@ namespace simple_reflection {
         return wrap_method_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
+    template <size_t I = 0, typename... Args>
+    constexpr void extract_type_indices(const std::tuple<Args...>&, std::vector<std::type_index>& indices) {
+        if constexpr (I < sizeof...(Args)) {
+            indices.emplace_back(typeid(std::tuple_element_t<I, std::tuple<Args...>>));
+            extract_type_indices<I + 1>(std::tuple<Args...>{}, indices);
+        }
+    }
+
     /**
      * A class for reflection.
      */
     class ReflectionBase {
         std::unordered_map<std::string, Member> m_offsets = {};
+#ifndef API_SET_NEW
         std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
+#endif
+
+#ifdef API_SET_NEW
+        std::unordered_map<std::string, std::pmr::vector<CallableWrapperNew>> m_funcs = {};
+#endif
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {
@@ -515,6 +540,36 @@ namespace simple_reflection {
 
             return *this;
         }
+
+#ifdef API_SET_NEW
+        template <auto Method>
+        ReflectionBase& register_method(std::string&& name) {
+            constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
+            using ReturnType = typename extract_method_types<decltype(Method)>::return_type;
+            using ArgTypes = typename extract_method_types<decltype(Method)>::arg_types;
+            using ClassType = typename extract_method_types<decltype(Method)>::class_type;
+
+            std::vector<std::type_index> arg_types;
+            constexpr size_t arg_count = std::tuple_size_v<ArgTypes>;
+            ArgTypes arg_types_tuple;
+            extract_type_indices(arg_types_tuple, arg_types);
+
+            if (m_funcs.find(name) == m_funcs.end()) {
+                m_funcs[name] = std::pmr::vector<CallableWrapperNew>();
+            }
+
+            auto parsed = wrap_method(Method);
+            m_funcs[name].emplace_back(
+                    parsed,
+                    typeid(ReturnType),
+                    std::move(arg_types),
+                    typeid(ClassType),
+                    is_const
+            );
+
+            return *this;
+        }
+#endif
 
         /**
          * Register a method of a class.

@@ -37,13 +37,16 @@ namespace helper_tests {
     class TestClass {
     public:
         float x, y;
+
         TestClass(float x, float y) : x(x), y(y) {
         }
+
         float test_function(float x, float y) {
             this->x = x;
             this->y = y;
             return x + y;
         }
+
         void test_void_function(float x, float y) {
             this->x = x;
             this->y = y;
@@ -58,6 +61,9 @@ namespace helper_tests {
         b = 2.1f;
         void* pack[] = refl_args(a, b);
         auto invoke_result = (x(&test_class, pack));
+        using arg = simple_reflection::extract_method_types<decltype(&TestClass::test_function)>::arg_types;
+        arg args;
+        assert(typeid(std::get<0>(args)) == typeid(float));
 
         auto y = simple_reflection::wrap_method(&TestClass::test_void_function);
         y(&test_class, pack);
