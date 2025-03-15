@@ -276,8 +276,8 @@ namespace simple_reflection {
 #endif
 
     // wtf is this!?
-    template <typename RetType, typename ClassType, typename... ArgTypes, size_t... Indices>
-    auto wrap_method_impl(RetType (ClassType::*method)(ArgTypes...), std::index_sequence<Indices...>) {
+    template <typename ReturnType, typename ClassType, typename... ArgTypes, size_t... Indices>
+    auto wrap_method_impl(ReturnType (ClassType::*method)(ArgTypes...), std::index_sequence<Indices...>) {
         return std::function<ReturnValueProxy (void*, void** args)>(
             // here we use a lambda function to wrap the method,
             // the lambda takes a void* object and a void** args,
@@ -289,7 +289,7 @@ namespace simple_reflection {
                 // invoke the method, and return the result.
                 // return the result in the form of a ReturnValueProxy, which is a wrapper for the return value.
                 // type-erased, and can manage life cycle of the return value.
-                if constexpr (std::is_void_v<RetType>) {
+                if constexpr (std::is_void_v<ReturnType>) {
                     (cls->*method)(
                         std::forward<remove_cvref_t<ArgTypes>>(
                             *reinterpret_cast<remove_cvref_t<ArgTypes> *>(*(args + Indices)))...);
@@ -314,8 +314,8 @@ namespace simple_reflection {
             });
     }
 
-    template <typename RetType, typename ClassType, typename... ArgTypes>
-    auto wrap_method(RetType (ClassType::*method)(ArgTypes...)) {
+    template <typename ReturnType, typename ClassType, typename... ArgTypes>
+    auto wrap_method(ReturnType (ClassType::*method)(ArgTypes...)) {
         return wrap_method_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
