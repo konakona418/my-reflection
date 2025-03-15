@@ -224,26 +224,30 @@ namespace simple_reflection {
                 // cast the void* object to the correct type.
                 auto cls = static_cast<ClassType *>(object);
                 // invoke the method, and return the result.
-                auto ret = (cls->*method)(
-                    // use std::forward to forward the arguments to the method.
-                    std::forward<remove_cvref_t<ArgTypes>>(
-                        // cast the void* to the correct type,
-                        // and then dereference it to get the value.
-                        *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
-                            // as mentioned above, the void** args is an array of pointers,
-                            // so here we use an offset to get the pointer to a specific argument.
-                            // and then dereference it to get the value.
-                            *(args + Indices)
-                        )
-                    )... // argument pack.
-                );
-                if constexpr (std::is_void_v<RetType>) {
-                    // if the return type is void, return a zero value, which is a nullptr.
-                    return ReturnValueProxy(0);
-                }
                 // return the result in the form of a ReturnValueProxy, which is a wrapper for the return value.
                 // type-erased, and can manage life cycle of the return value.
-                return ReturnValueProxy(std::move(ret));
+                if constexpr (std::is_void_v<RetType>) {
+                    (cls->*method)(
+                        std::forward<remove_cvref_t<ArgTypes>>(
+                            *reinterpret_cast<remove_cvref_t<ArgTypes> *>(*(args + Indices)))...);
+                    // if the return type is void, return a zero value, which is a nullptr.
+                    return ReturnValueProxy(0);
+                } else {
+                    auto ret = (cls->*method)(
+                        // use std::forward to forward the arguments to the method.
+                        std::forward<remove_cvref_t<ArgTypes>>(
+                            // cast the void* to the correct type,
+                            // and then dereference it to get the value.
+                            *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
+                                // as mentioned above, the void** args is an array of pointers,
+                                // so here we use an offset to get the pointer to a specific argument.
+                                // and then dereference it to get the value.
+                                *(args + Indices)
+                            )
+                        )... // argument pack.
+                    );
+                    return ReturnValueProxy(std::move(ret));
+                }
             });
     }
 
