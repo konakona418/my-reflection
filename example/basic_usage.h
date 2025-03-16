@@ -54,7 +54,7 @@ namespace basic_usage {
     };
 
     // create a reflection object to register the members and methods of Vector3.
-    static simple_reflection::ReflectionBase reflection = simple_reflection::make_reflection<Vector3<float>>()
+    static auto& reflection = simple_reflection::make_reflection<Vector3<float>>()
             // to register the 3 members of Vector3.
             .register_member<&Vector3<float>::x>("x")
             .register_member<&Vector3<float>::y>("y")
@@ -159,6 +159,11 @@ namespace basic_usage {
         vec.push_back(y_wrapped);
         vec.push_back(z_wrapped);
 
+
+        // can also set the value of the wrapped objects.
+        x_wrapped.set_value(10.0f);
+        std::cout << "vec.x after set: " << x_wrapped.deref_into<float>() << std::endl;
+
         // we can then convert the wrapped objects to a simple_reflection::ArgList
         auto args2 = refl_arg_list(vec);
 
@@ -183,7 +188,11 @@ namespace basic_usage {
 
         // and initializer list is also supported.
         proxy = reflection.invoke_method(ptr, "fetch_sub",
-            simple_reflection::ArgList {x_wrapped, y_wrapped, z_wrapped});
+            merge_arg_list(
+                // and merging arg lists is also supported.
+                simple_reflection::ArgList {x_wrapped},
+                simple_reflection::refl_args(2.0f),
+                simple_reflection::refl_args(1.0f)));
 
         std::cout << "vec.x after fetch_sub: " << x_wrapped.deref_into<float>() << std::endl;
         std::cout << "vec.y after fetch_sub: " << y_wrapped.deref_into<float>() << std::endl;

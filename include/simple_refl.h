@@ -20,7 +20,7 @@
 #include <sstream>
 #include <typeindex>
 #include <variant>
-#include <cstring>
+#include <numeric>
 
 /** Simple Reflection Library. */
 namespace simple_reflection {
@@ -209,6 +209,15 @@ namespace simple_reflection {
             throw std::runtime_error("Type mismatch");
         }
 
+        template <typename T>
+        T set_value(T value) {
+            if (type_index == typeid(T)) {
+                *static_cast<T *>(object) = value;
+                return value;
+            }
+            throw std::runtime_error("Type mismatch");
+        }
+
         static RawObjectWrapper none() {
             return {nullptr, typeid(void)};
         }
@@ -296,6 +305,77 @@ namespace simple_reflection {
 
     inline ArgList refl_arg_list(const RawObjectWrapperVec& args) {
         return ArgList(args);
+    }
+
+    /**
+     * Merge two ArgList into one.
+     * @note This will invalidate the ArgList passed in.
+     * @param lhs The first ArgList.
+     * @param rhs The second ArgList.
+     * @return The merged ArgList.
+     */
+    inline ArgList merge_arg_list(ArgList&& lhs, ArgList&& rhs) {
+        auto merged_args = new RawArg[lhs.size + rhs.size];
+
+        for (size_t i = 0; i < lhs.size; i++) {
+            merged_args[i] = lhs.args[i];
+        }
+        for (size_t i = 0; i < rhs.size; i++) {
+            merged_args[i + lhs.size] = rhs.args[i];
+        }
+
+        auto type_indices = lhs.type_indices;
+        type_indices.insert(type_indices.end(), rhs.type_indices.begin(), rhs.type_indices.end());
+
+        delete[] lhs.args;
+        delete[] rhs.args;
+
+        lhs.args = nullptr;
+        rhs.args = nullptr;
+
+        return {merged_args, type_indices, lhs.size + rhs.size};
+    }
+
+    /**
+     * Merge multiple ArgList into one.
+     * @note This will invalidate the ArgList passed in.
+     * @tparam ArgTypes
+     * @param args The ArgList to be merged.
+     * @return The merged ArgList.
+     */
+    template <
+        typename... ArgTypes,
+        std::enable_if_t<(std::is_same_v<remove_cvref_t<ArgTypes>, ArgList> && ...), bool>  = false,
+        std::enable_if_t<sizeof...(ArgTypes) >= 2, bool>  = false
+    >
+    ArgList merge_arg_list(ArgTypes&&... args) {
+        std::vector<ArgList> arg_lists;
+        (arg_lists.emplace_back(std::forward<ArgTypes>(args)), ...);
+
+        size_t size = std::accumulate(arg_lists.begin(), arg_lists.end(), 0, [](size_t sum, const ArgList& arg_list) {
+            return sum + arg_list.size;
+        });
+
+        auto* merged_args = new RawArg[size];
+        for (size_t i = 0; i < arg_lists.size(); i++) {
+            for (size_t j = 0; j < arg_lists[i].size; j++) {
+                merged_args[i * arg_lists[i].size + j] = arg_lists[i].args[j];
+            }
+        }
+
+        for (auto& arg_list: arg_lists) {
+            delete[] arg_list.args;
+            arg_list.args = nullptr;
+        }
+
+        auto type_indices = arg_lists[0].type_indices;
+        for (size_t i = 1; i < arg_lists.size(); i++) {
+            type_indices.insert(
+                type_indices.end(), arg_lists[i].type_indices.begin(),
+                arg_lists[i].type_indices.end());
+        }
+
+        return {merged_args, type_indices, size};
     }
 
     template <size_t I = 0, typename... Args>
@@ -1307,13 +1387,72 @@ namespace simple_reflection {
         }
     };
 
-    inline ReflectionBase make_reflection(std::type_index type_index) {
-        return ReflectionBase(type_index);
+    class reflection_registry_not_found_exception : public std::runtime_error {
+    public:
+        [[nodiscard]] const char* what() const noexcept override {
+            return "ReflectionRegistryBase not found.";
+        }
+
+        explicit reflection_registry_not_found_exception(const std::string& what) : std::runtime_error(what) {
+            std::cerr << what << std::endl;
+        }
+    };
+
+    class ReflectionRegistryBase {
+        std::pmr::unordered_map<std::type_index, ReflectionBase> m_reflections;
+
+    public:
+        ReflectionRegistryBase() = default;
+
+        ReflectionRegistryBase(const ReflectionRegistryBase&) = delete;
+
+        ReflectionRegistryBase(ReflectionRegistryBase&&) = delete;
+
+        static ReflectionRegistryBase& instance() {
+            static ReflectionRegistryBase _instance;
+            return _instance;
+        }
+
+        ReflectionBase& register_base(std::type_index type_index, ReflectionBase reflection) {
+            m_reflections.insert({type_index, std::move(reflection)});
+            return m_reflections.at(type_index);
+        }
+
+        template <typename ClassType>
+        ReflectionBase& register_base() {
+            register_base(typeid(ClassType), ReflectionBase(typeid(ClassType)));
+            return m_reflections.at(typeid(ClassType));
+        }
+
+        template <typename ClassType>
+        ReflectionBase& get_reflection() {
+            try {
+                return m_reflections.at(typeid(ClassType));
+            } catch (const std::out_of_range&) {
+                std::stringstream ss;
+                ss << "ReflectionRegistryBase not found for type with typeid: " << typeid(ClassType).name();
+                throw reflection_registry_not_found_exception(ss.str());
+            }
+        }
+
+        ReflectionBase& get_reflection(const std::type_index type_index) {
+            try {
+                return m_reflections.at(type_index);
+            } catch (const std::out_of_range&) {
+                std::stringstream ss;
+                ss << "ReflectionRegistryBase not found for type with typeid: " << type_index.name();
+                throw reflection_registry_not_found_exception(ss.str());
+            }
+        }
+    };
+
+    inline ReflectionBase& make_reflection(const std::type_index type_index) {
+        return ReflectionRegistryBase::instance().register_base(type_index, ReflectionBase(type_index));
     }
 
     template <typename ClassType>
-    ReflectionBase make_reflection() {
-        return ReflectionBase(typeid(ClassType));
+    ReflectionBase& make_reflection() {
+        return ReflectionRegistryBase::instance().register_base<ClassType>();
     }
 }
 
