@@ -1,56 +1,58 @@
 # my-reflection
 
-This is a tiny C++ library which provides a set of simple reflection APIs.
+A lightweight C++ library providing simple reflection APIs.
 
-This project is mainly made to practice template usage, and while it relies heavily on templates,
-which lacks stability and readability guarantees,
-so I don't think it's a good idea to use it in production.
+This project was created primarily to practice template programming. Since it relies heavily on templates, it lacks stability and readability guarantees. As a result, I wouldn’t recommend using it in production.
 
-The development is still in progress, so the APIs might change in the future.
+Development is still ongoing, and the APIs may change in the future.
 
-Due to heavy schoolwork, I guess I will have limited time to work on this project. 😭
+Due to a heavy academic workload, I might not have much time to work on this project. 😭
 
 >
-> I guess some might argue that this is not reflection.
-> Well that depends on your definition of reflection.
+> Some might argue that this isn’t true reflection.
+> Well, that depends on how you define reflection.
 > Whatever. 😋
-> 
+>
 
 ## Features
-It provides several features:
 
-* Access to class members and methods.
-* Invoking functions.
-* Type safety (I guess it does) guarantees.
-* Limited support for inheritance.
-* Limited support for templates.
+This library provides:
 
-All done during runtime, (partially) type-erased, and without any additional dependencies.
+* Access to class members and methods
+* Function invocation
+* (Presumed) type safety guarantees
+* Limited support for inheritance
+* Limited support for templates
+* Type information retrieval
+
+All of this is done at runtime, with partial type erasure, and without any additional dependencies.
 
 ## Limitations
-However, it does not provide the following features:
 
-* Access to pure virtual methods (may lead to undefined behavior).
-* Access to private or protected members & methods.
-* Access to static members & methods.
-* Type information access.
+However, it does **not** support:
 
-Also, it requires you to register all classes and fields you want to access manually,
-which is somehow a bit inconvenient, but it's the only way to do it without any additional dependencies.
+* Access to pure virtual methods (may lead to undefined behavior)
+* Access to private or protected members and methods
+* Access to static members and methods
 
-Maybe I will make another project to make it possible to automatically register classes and fields,
-but I'm not sure.
+Additionally, all classes and fields must be registered manually before use. While this is somewhat inconvenient, it is the only way to achieve reflection without introducing extra dependencies.
+
+I may create another project to enable automatic registration of classes and fields, but I’m not sure yet.
 
 ## Usage
-The library is header-only, so you just need to include the header file in your project.
 
-Btw I made another helper library which can be used to write tests in such manner,
+This is a header-only library, so you just need to include the header file in your project.
+
+You can find some examples in the `examples` directory.
+
+By the way, I also created a small helper library for writing tests in a structured way:
 
 ```c++
 begin_test("my_test") {
-    test(/* func...*/ );
-    test(/* func...*/ );
+    test(/* func... */);
+    test(/* func... */);
 } end_test()
 ```
 
-You can use it if you like, for some simple tests.
+Feel free to use it for simple testing if you find it helpful.
+
