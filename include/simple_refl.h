@@ -373,7 +373,32 @@ namespace simple_reflection {
         }
     };
 
+    /**
+     * A struct to represent a return value of a method.
+     * @note This class does not only serve as a proxy,
+     * @note but also handles the @b life @b cycle of the actual return value.
+     * @note When the ReturnValueProxy is destroyed,
+     * @note the actual return value @b WILL @b BE @b DESTROYED as well!
+     * @note The discard may not be so obvious,
+     * @note especially when using an identifier to store an instance of ReturnValueProxy,
+     * @note extracted the raw pointer and then reused the identifier for another instance.
+     * @note Here the first ReturnValueProxy, along with the actual data, is invalidated!
+     * @note See PhantomDataHelper for more details.
+     * @code
+     * auto proxy = reflection.invoke_function("ctor", args1);
+     * void* ptr = proxy.get_raw();
+     * proxy = reflection.invoke_function("ctor", args2); // the 'ptr' is invalidated here.
+     * do_something(ptr); // undefined behavior!
+     * @endcode
+     */
     class ReturnValueProxy {
+        /**
+         * pointer to the return value.
+         * @note this does not only serve as a pointer,
+         * @note but also handles the @b life @b cycle of the actual return value.
+         * @note so when the ReturnValueProxy is destroyed,
+         * @note the actual return value WILL BE DESTROYED as well!
+         */
         std::shared_ptr<void> ptr;
         size_t size;
         std::type_index type_index = typeid(void);
@@ -385,11 +410,22 @@ namespace simple_reflection {
             this->size = sizeof(ValueType);
         }
 
+        ReturnValueProxy(std::shared_ptr<void> ptr, size_t size, std::type_index type_index) {
+            this->ptr = std::move(ptr);
+            this->size = size;
+            this->type_index = type_index;
+        }
+
         template <typename ValueType>
         ValueType get() {
             return *static_cast<ValueType *>(this->ptr.get());
         }
 
+        /**
+         * Get the raw pointer to the return value.
+         * Be aware that the life cycle of the actual return value can be unclear if you use this method.
+         * @return the raw pointer to the return value.
+         */
         [[nodiscard]] void* get_raw() const {
             return this->ptr.get();
         }
@@ -398,12 +434,91 @@ namespace simple_reflection {
             return this->size;
         }
 
+        /**
+         * Alias for get_ptr().
+         * @return a copy of the shared pointer to the return value.
+         */
+        [[nodiscard]] std::shared_ptr<void> duplicate_inner() const {
+            return get_ptr();
+        }
+
+        /**
+         * Get a copy of the shared pointer to the return value.
+         * @return a copy of the shared pointer to the return value.
+         */
+        [[nodiscard]] std::shared_ptr<void> get_ptr() const {
+            return this->ptr;
+        }
+
+        ReturnValueProxy(const ReturnValueProxy& other) {
+            this->ptr = other.ptr;
+            this->size = other.size;
+            this->type_index = other.type_index;
+        }
+
+        /**
+         * Get a copy of the ReturnValueProxy.
+         * @return a copy of the ReturnValueProxy.
+         */
+        [[nodiscard]] ReturnValueProxy duplicate() const {
+            return {this->ptr, this->size, this->type_index};
+        }
+
         [[nodiscard]] std::type_index get_type_index() const {
             return this->type_index;
         }
 
+        /**
+         * Convert the ReturnValueProxy to a RawObjectWrapper.
+         * @return a RawObjectWrapper.
+         */
         [[nodiscard]] RawObjectWrapper to_object_wrapper() const {
             return {this->get_raw(), this->get_type_index()};
+        }
+    };
+
+    using PhantomData = std::shared_ptr<void>;
+
+    /**
+     * A struct to represent a phantom data.
+     * This class is mainly applied to handle the life cycle of classes like ReturnValueProxy.
+     * In cases like reusing the same identifier to store different instances of ReturnValueProxy,
+     * while keeping the memory valid.
+     */
+    class PhantomDataHelper {
+        std::vector<PhantomData> phantom_data = {};
+
+    public:
+        PhantomDataHelper() {
+            this->phantom_data.reserve(16);
+        }
+
+        PhantomDataHelper(const PhantomDataHelper& other) {
+            this->phantom_data = other.phantom_data;
+        }
+
+        PhantomDataHelper(PhantomDataHelper&& other) noexcept {
+            this->phantom_data = std::move(other.phantom_data);
+        }
+
+        PhantomDataHelper& operator=(const PhantomDataHelper& other) = default;
+
+        PhantomDataHelper& operator=(PhantomDataHelper&& other) noexcept {
+            this->phantom_data = std::move(other.phantom_data);
+            return *this;
+        }
+
+        void push(PhantomData phantom) {
+            this->phantom_data.push_back(std::move(phantom));
+        }
+
+        PhantomDataHelper& operator+=(PhantomData phantom) {
+            this->phantom_data.push_back(std::move(phantom));
+            return *this;
+        }
+
+        void clear() {
+            this->phantom_data.clear();
         }
     };
 
@@ -574,7 +689,6 @@ namespace simple_reflection {
         ReflectionBase() = delete;
 
         explicit ReflectionBase(std::type_index base_type_index) : m_base_type_index(base_type_index) {
-
         }
 
         std::type_index get_class_type() const {

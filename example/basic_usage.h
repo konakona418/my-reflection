@@ -29,6 +29,10 @@ namespace basic_usage {
             return std::make_tuple(this->x += x, this->y += y, this->z += z);
         }
 
+        std::tuple<T, T, T> fetch_sub(T x, T y, T z) {
+            return std::make_tuple(this->x -= x, this->y -= y, this->z -= z);
+        }
+
         Vector3 operator+(T scalar) {
             return Vector3(x + scalar, y + scalar, z + scalar);
         }
@@ -56,6 +60,7 @@ namespace basic_usage {
             .register_member<&Vector3<float>::y>("y")
             .register_member<&Vector3<float>::z>("z")
             .register_method<&Vector3<float>::fetch_add>("fetch_add")
+            .register_method<&Vector3<float>::fetch_sub>("fetch_sub")
             // to register the 2 methods of Vector3 which has no overload.
             .register_method<&Vector3<float>::operator*>("operator*")
             // to register the overloaded method of Vector3.
@@ -115,6 +120,13 @@ namespace basic_usage {
     }
 
     inline void demonstrate_type_erasure() {
+        std::cout << "demonstrate type erasure:" << std::endl;
+
+        // create a helper object to hold the phantom data,
+        // this is because we want to reuse the same identifier for different return value.
+        // if we don't do so, the data can be invalidated.
+        simple_reflection::PhantomDataHelper phantom;
+
         // here we use a helper function to convert the arguments to a simple_reflection::ArgList
         auto args = simple_reflection::refl_args(1.0f, 2.0f, 3.0f);
 
@@ -137,6 +149,10 @@ namespace basic_usage {
         auto y_wrapped = reflection.get_member_wrapped(ptr, "y");
         auto z_wrapped = reflection.get_member_wrapped(ptr, "z");
 
+        std::cout << "vec.x: " << x_wrapped.deref_into<float>() << std::endl;
+        std::cout << "vec.y: " << y_wrapped.deref_into<float>() << std::endl;
+        std::cout << "vec.z: " << z_wrapped.deref_into<float>() << std::endl;
+
         // convert the wrapped objects to a simple_reflection::RawObjectWrapperVec.
         simple_reflection::RawObjectWrapperVec vec;
         vec.push_back(x_wrapped);
@@ -146,6 +162,9 @@ namespace basic_usage {
         // we can then convert the wrapped objects to a simple_reflection::ArgList
         auto args2 = refl_arg_list(vec);
 
+        // we are about to rewrite the return value, so we need to duplicate the original one,
+        // in order to avoid the original one being invalidated by the auto memory de-allocation of shared_ptr<void>.
+        phantom.push(proxy.duplicate_inner());
         // invoke the method of Vector3, which takes 3 parameters, and returns a tuple.
         proxy = reflection.invoke_method(ptr, "fetch_add", args2);
         std::cout << "vec.x after fetch_add: " << x_wrapped.deref_into<float>() << std::endl;
@@ -155,6 +174,23 @@ namespace basic_usage {
         // and we can utilize the proxy to get the return value (the tuple) as well.
         auto result = proxy.get<std::tuple<float, float, float>>();
         std::cout << "result of fetch_add: "
+                << std::get<0>(result) << " "
+                << std::get<1>(result) << " "
+                << std::get<2>(result) << std::endl;
+
+        // similar to the previous case, we need to duplicate the original one.
+        phantom.push(proxy.duplicate_inner());
+
+        // and initializer list is also supported.
+        proxy = reflection.invoke_method(ptr, "fetch_sub",
+            simple_reflection::ArgList {x_wrapped, y_wrapped, z_wrapped});
+
+        std::cout << "vec.x after fetch_sub: " << x_wrapped.deref_into<float>() << std::endl;
+        std::cout << "vec.y after fetch_sub: " << y_wrapped.deref_into<float>() << std::endl;
+        std::cout << "vec.z after fetch_sub: " << z_wrapped.deref_into<float>() << std::endl;
+
+        result = proxy.get<std::tuple<float, float, float>>();
+        std::cout << "result of fetch_sub: "
                 << std::get<0>(result) << " "
                 << std::get<1>(result) << " "
                 << std::get<2>(result) << std::endl;
@@ -173,6 +209,8 @@ namespace basic_usage {
             simple_reflection::wrap_object(ptr2, reflection.get_class_type())
         };
         auto add_args_parsed = refl_arg_list(add_args);
+
+        phantom.push(proxy.duplicate_inner());
 
         // invoke the method of Vector3, which takes 1 parameter, and returns another Vector3.
         proxy = reflection.invoke_method(ptr, "operator+", add_args_parsed);
