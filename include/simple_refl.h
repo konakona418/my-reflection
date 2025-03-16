@@ -214,12 +214,12 @@ namespace simple_reflection {
         }
     };
 
-    inline RawObjectWrapper make_raw_object_wrapper(void* object, std::type_index type_index) {
+    inline RawObjectWrapper wrap_object(void* object, std::type_index type_index) {
         return {object, type_index};
     }
 
     template <typename T>
-    RawObjectWrapper make_raw_object_wrapper(T* object) {
+    RawObjectWrapper wrap_object(T* object) {
         return {object, typeid(T)};
     }
 
@@ -251,11 +251,22 @@ namespace simple_reflection {
             this->size = args.size();
         }
 
-        ArgList(const ArgList& other) {
+        ArgList(std::initializer_list<RawObjectWrapper> args) {
+            this->args = new RawArg[args.size()];
+            for (size_t i = 0; i < args.size(); i++) {
+                this->args[i] = args.begin()[i].object;
+                this->type_indices.emplace_back(args.begin()[i].type_index);
+            }
+            this->size = args.size();
+        }
+
+        ArgList(const ArgList& other) = delete;
+
+        ArgList(ArgList&& other) noexcept {
+            args = other.args;
+            type_indices = std::move(other.type_indices);
             size = other.size;
-            args = static_cast<void **>(std::malloc(sizeof(RawArg) * size));
-            std::memcpy(args, other.args, sizeof(RawArg) * other.size);
-            type_indices = other.type_indices;
+            other.args = nullptr;
         }
 
         ~ArgList() {
@@ -772,7 +783,7 @@ namespace simple_reflection {
             return nullptr;
         }
 
-        RawObjectWrapper get_member_as_wrapped_object(void* object, std::string&& name) {
+        RawObjectWrapper get_member_wrapped(void* object, std::string&& name) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 return RawObjectWrapper(object + member.offset, member.type_info);

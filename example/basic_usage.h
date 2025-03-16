@@ -133,9 +133,9 @@ namespace basic_usage {
 
         // get the wrapped objects of the members respectively.
         // this is a type which wraps the pointer along with the type information.
-        auto x_wrapped = reflection.get_member_as_wrapped_object(ptr, "x");
-        auto y_wrapped = reflection.get_member_as_wrapped_object(ptr, "y");
-        auto z_wrapped = reflection.get_member_as_wrapped_object(ptr, "z");
+        auto x_wrapped = reflection.get_member_wrapped(ptr, "x");
+        auto y_wrapped = reflection.get_member_wrapped(ptr, "y");
+        auto z_wrapped = reflection.get_member_wrapped(ptr, "z");
 
         // convert the wrapped objects to a simple_reflection::RawObjectWrapperVec.
         simple_reflection::RawObjectWrapperVec vec;
@@ -170,7 +170,7 @@ namespace basic_usage {
             // for void* does not contain any valid type information for checks during method invocation.
             // we can use the type information we preserved earlier,
             // but we can also fetch it from ReflectionBase, like this:
-            simple_reflection::make_raw_object_wrapper(ptr2, reflection.get_class_type())
+            simple_reflection::wrap_object(ptr2, reflection.get_class_type())
         };
         auto add_args_parsed = refl_arg_list(add_args);
 
@@ -179,9 +179,9 @@ namespace basic_usage {
         auto ptr_vec3 = proxy.get_raw();
 
         // get the members of the returned object.
-        x_wrapped = reflection.get_member_as_wrapped_object(ptr_vec3, "x");
-        y_wrapped = reflection.get_member_as_wrapped_object(ptr_vec3, "y");
-        z_wrapped = reflection.get_member_as_wrapped_object(ptr_vec3, "z");
+        x_wrapped = reflection.get_member_wrapped(ptr_vec3, "x");
+        y_wrapped = reflection.get_member_wrapped(ptr_vec3, "y");
+        z_wrapped = reflection.get_member_wrapped(ptr_vec3, "z");
 
         // print the result
         std::cout << "result of operator+: " << x_wrapped.deref_into<float>() << std::endl;
