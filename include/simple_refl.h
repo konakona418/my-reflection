@@ -22,8 +22,6 @@
 #include <variant>
 #include <cstring>
 
-#define API_SET_OLD
-
 /** Simple Reflection Library. */
 namespace simple_reflection {
     template <typename FullName>
@@ -198,7 +196,7 @@ namespace simple_reflection {
         template <typename T>
         [[nodiscard]] T* into() const {
             if (type_index == typeid(T)) {
-                return static_cast<T*>(object);
+                return static_cast<T *>(object);
             }
             return nullptr;
         }
@@ -206,7 +204,7 @@ namespace simple_reflection {
         template <typename T>
         [[nodiscard]] T deref_into() const {
             if (type_index == typeid(T)) {
-                return *static_cast<T*>(object);
+                return *static_cast<T *>(object);
             }
             throw std::runtime_error("Type mismatch");
         }
@@ -285,7 +283,7 @@ namespace simple_reflection {
         }
     };
 
-    inline ArgList make_arg_list(const RawObjectWrapperVec& args) {
+    inline ArgList refl_arg_list(const RawObjectWrapperVec& args) {
         return ArgList(args);
     }
 
@@ -305,7 +303,7 @@ namespace simple_reflection {
         }
     }
 
-    template <typename... ArgTypes, std::enable_if_t<(sizeof...(ArgTypes) > 1), bool> = false>
+    template <typename... ArgTypes>
     ArgList refl_args(ArgTypes&&... args) {
         auto arg_tuple = std::make_tuple(std::addressof(args)...);
         auto arg_list = new RawArg[sizeof...(ArgTypes)];
@@ -506,13 +504,7 @@ namespace simple_reflection {
      */
     class ReflectionBase {
         std::unordered_map<std::string, Member> m_offsets = {};
-#ifndef API_SET_NEW
         std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
-#endif
-
-#ifdef API_SET_NEW
-        std::unordered_map<std::string, std::pmr::vector<CallableWrapperNew>> m_funcs = {};
-#endif
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {

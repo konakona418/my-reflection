@@ -71,6 +71,7 @@ namespace helper_tests {
         //assert(invoke_result.get<float>() == 5.3f);
         assert(test_class.x == 3.2f);
         assert(test_class.y == 2.1f);
+        assert(std::type_index(typeid(typeof(*pa))) == invoke_result.get_type_index());
     }
 
     void run_tests() {

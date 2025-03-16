@@ -40,6 +40,13 @@ namespace basic_usage {
         Vector3 operator*(T scalar) const {
             return Vector3(x * scalar, y * scalar, z * scalar);
         }
+
+        float sum_three(T x, T y, T z) {
+            this->x = x;
+            this->y = y;
+            this->z = z;
+            return x + y + z;
+        }
     };
 
     // create a reflection object to register the members and methods of Vector3.
@@ -105,6 +112,79 @@ namespace basic_usage {
         std::cout << "result of operator+: " << ret3.x << std::endl;
         std::cout << "result of operator+: " << ret3.y << std::endl;
         std::cout << "result of operator+: " << ret3.z << std::endl;
+    }
+
+    inline void demonstrate_type_erasure() {
+        // here we use a helper function to convert the arguments to a simple_reflection::ArgList
+        auto args = simple_reflection::refl_args(1.0f, 2.0f, 3.0f);
+
+        // then invoke the constructor of Vector3...
+        auto proxy = reflection.invoke_function("ctor", args);
+        // ...which returns a simple_reflection::ReturnValueProxy.
+        // this object manages the life cycle of the return value, so there's no need to worry about memory leak.
+        // at least I guess so.
+
+        // we can preserve the type information of the class here (as we just invoked the constructor),
+        // in case we want to use it later.
+        auto type_info = proxy.get_type_index();
+
+        // get the pointer to the object, type-erased.
+        void* ptr = proxy.get_raw();
+
+        // get the wrapped objects of the members respectively.
+        // this is a type which wraps the pointer along with the type information.
+        auto x_wrapped = reflection.get_member_as_wrapped_object(ptr, "x");
+        auto y_wrapped = reflection.get_member_as_wrapped_object(ptr, "y");
+        auto z_wrapped = reflection.get_member_as_wrapped_object(ptr, "z");
+
+        // convert the wrapped objects to a simple_reflection::RawObjectWrapperVec.
+        simple_reflection::RawObjectWrapperVec vec;
+        vec.push_back(x_wrapped);
+        vec.push_back(y_wrapped);
+        vec.push_back(z_wrapped);
+
+        // we can then convert the wrapped objects to a simple_reflection::ArgList
+        auto args2 = refl_arg_list(vec);
+
+        // invoke the method of Vector3, which takes 3 parameters, and returns a tuple.
+        proxy = reflection.invoke_method(ptr, "fetch_add", args2);
+        std::cout << "vec.x after fetch_add: " << x_wrapped.deref_into<float>() << std::endl;
+        std::cout << "vec.y after fetch_add: " << y_wrapped.deref_into<float>() << std::endl;
+        std::cout << "vec.z after fetch_add: " << z_wrapped.deref_into<float>() << std::endl;
+
+        // and we can utilize the proxy to get the return value (the tuple) as well.
+        auto result = proxy.get<std::tuple<float, float, float>>();
+        std::cout << "result of fetch_add: "
+                << std::get<0>(result) << " "
+                << std::get<1>(result) << " "
+                << std::get<2>(result) << std::endl;
+
+        // now we create a new Vector3 and invoke the method of Vector3.
+        auto vec2_args = simple_reflection::refl_args(4.0f, 5.0f, 6.0f);
+        auto vec2_proxy = reflection.invoke_function("ctor", vec2_args);
+        void* ptr2 = vec2_proxy.get_raw();
+
+        // we then build a simple_reflection::ArgList from the wrapped object.
+        auto add_args = simple_reflection::RawObjectWrapperVec{
+            // note that we cannot use refl_args here,
+            // for void* does not contain any valid type information for checks during method invocation.
+            simple_reflection::make_raw_object_wrapper(ptr2, type_info)
+        };
+        auto add_args_parsed = refl_arg_list(add_args);
+
+        // invoke the method of Vector3, which takes 1 parameter, and returns another Vector3.
+        proxy = reflection.invoke_method(ptr, "operator+", add_args_parsed);
+        auto ptr_vec3 = proxy.get_raw();
+
+        // get the members of the returned object.
+        x_wrapped = reflection.get_member_as_wrapped_object(ptr_vec3, "x");
+        y_wrapped = reflection.get_member_as_wrapped_object(ptr_vec3, "y");
+        z_wrapped = reflection.get_member_as_wrapped_object(ptr_vec3, "z");
+
+        // print the result
+        std::cout << "result of operator+: " << x_wrapped.deref_into<float>() << std::endl;
+        std::cout << "result of operator+: " << y_wrapped.deref_into<float>() << std::endl;
+        std::cout << "result of operator+: " << z_wrapped.deref_into<float>() << std::endl;
     }
 } // basic_usage
 

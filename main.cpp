@@ -1,7 +1,6 @@
 #define EXAMPLE
 #define TEST
 
-#undef TEST
 
 #ifdef TEST
 #include "test/basic_tests.h"
@@ -23,6 +22,7 @@ int main() {
 #endif
 #ifdef EXAMPLE
     basic_usage::demonstrate();
+    basic_usage::demonstrate_type_erasure();
 #endif
     return 0;
 }

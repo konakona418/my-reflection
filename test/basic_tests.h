@@ -204,6 +204,14 @@ namespace basic_tests {
         assert(refl.invoke_method<int>(vec, "overload_add_x", 1) == 1);
     }
 
+    void test_complete_type_erasure() {
+        auto vec = Vector3(1.0f, 2.0f, 3.0f);
+        auto args = simple_reflection::refl_args(1.0f, 2.0f);
+        simple_reflection::ReturnValueProxy result = refl.invoke_method(vec, "fetch_add_x_and_y", std::move(args));
+        auto tuple = result.get<std::tuple<float, float>>();
+        assert(std::get<0>(tuple) == 1.0f && std::get<1>(tuple) == 2.0f);
+    }
+
     void run_tests() {
         begin_test("basic") {
             test(basic_tests::test_basic_register);
@@ -222,6 +230,7 @@ namespace basic_tests {
             test(basic_tests::test_const_method);
             test(basic_tests::test_method_is_const);
             test(basic_tests::test_method_overload);
+            test(basic_tests::test_complete_type_erasure);
         } end_test();
     }
 }
