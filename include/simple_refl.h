@@ -19,12 +19,9 @@
 #include <memory>
 #include <sstream>
 #include <typeindex>
+#include <variant>
 
 #define API_SET_OLD
-
-#ifdef API_SET_NEW
-#include <variant>
-#endif
 
 /** Simple Reflection Library. */
 namespace simple_reflection {
@@ -137,6 +134,13 @@ namespace simple_reflection {
         using class_type = ClassType;
     };
 
+    template <typename RetType, typename ClassType, typename... ArgTypes>
+    struct extract_method_types<RetType(ClassType::*)(ArgTypes...) const> {
+        using return_type = RetType;
+        using arg_types = std::tuple<ArgTypes...>;
+        using class_type = ClassType;
+    };
+
     template <typename FullName>
     using extract_method_return_type_t = typename extract_method_types<FullName>::return_type;
 
@@ -170,26 +174,81 @@ namespace simple_reflection {
         }
     };
 
-    using RawArg = void*;
-    using RawArgList = RawArg*;
+    struct RawObjectWrapper {
+        void* object;
+        std::type_index type_index;
+
+        RawObjectWrapper(void* object, std::type_index type_index) : object(object), type_index(type_index) {
+        }
+
+        template <typename T>
+        explicit RawObjectWrapper(T* object) : object(object), type_index(typeid(T)) {
+        }
+
+        [[nodiscard]] bool is_none_type() const {
+            return type_index == typeid(void);
+        }
+
+        static RawObjectWrapper none() {
+            return {nullptr, typeid(void)};
+        }
+    };
+
+    inline RawObjectWrapper make_raw_object_wrapper(void* object, std::type_index type_index) {
+        return {object, type_index};
+    }
+
+    template <typename T>
+    RawObjectWrapper make_raw_object_wrapper(T* object) {
+        return {object, typeid(T)};
+    }
+
+    using RawArg = void *;
+    using RawArgList = RawArg *;
+
+    class ReturnValueProxy;
+    using CommonCallable = std::function<ReturnValueProxy (void*, void** args)>;
+
+    using RawObjectWrapperVec = std::pmr::vector<RawObjectWrapper>;
 
     struct ArgList {
         RawArgList args;
+        std::pmr::vector<std::type_index> type_indices;
         size_t size;
 
-        ArgList(RawArgList args, size_t size) : args(args), size(size) {
+        ArgList(RawArgList args, std::pmr::vector<std::type_index> type_indices, size_t size) {
+            this->args = args;
+            this->type_indices = std::move(type_indices);
             this->size = size;
+        }
+
+        explicit ArgList(RawObjectWrapperVec&& args) {
+            this->args = new RawArg[args.size()];
+            for (size_t i = 0; i < args.size(); i++) {
+                this->args[i] = args[i].object;
+                this->type_indices.emplace_back(args[i].type_index);
+            }
+            this->size = args.size();
+        }
+
+        static ArgList make_arg_list(std::pmr::vector<RawObjectWrapper>&& args) {
+            return ArgList(std::move(args));
         }
 
         ArgList(const ArgList&) = delete;
 
-        ArgList(ArgList&&) = default;
+        ArgList(ArgList&& other) noexcept {
+            args = other.args;
+            type_indices = std::move(other.type_indices);
+            size = other.size;
+            other.args = nullptr;
+        }
 
         ~ArgList() {
             delete[] args;
         }
 
-        [[nodiscard]] RawArgList get() const& {
+        [[nodiscard]] RawArgList get() const & {
             return args;
         }
 
@@ -199,8 +258,24 @@ namespace simple_reflection {
          * To be specific, the destructor can be, though not always, called right after the get() method,
          * if we don't prevent it.
          */
-        [[nodiscard]] RawArgList get() const&& = delete;
+        [[nodiscard]] RawArgList get() const && = delete;
+
+        [[nodiscard]] std::pmr::vector<RawObjectWrapper> to_object_wrappers() const {
+            std::pmr::vector<RawObjectWrapper> wrappers;
+            for (size_t i = 0; i < size; i++) {
+                wrappers.emplace_back(args[i], type_indices[i]);
+            }
+            return wrappers;
+        }
     };
+
+    template <size_t I = 0, typename... Args>
+    constexpr void extract_type_indices(const std::tuple<Args...>&, std::pmr::vector<std::type_index>& indices) {
+        if constexpr (I < sizeof...(Args)) {
+            indices.emplace_back(typeid(std::tuple_element_t<I, std::tuple<Args...>>));
+            extract_type_indices<I + 1>(std::tuple<Args...>{}, indices);
+        }
+    }
 
     template <size_t I = 0, typename... Args>
     constexpr void assign_raw_args(RawArgList indices, std::tuple<Args...> args) {
@@ -214,8 +289,13 @@ namespace simple_reflection {
     ArgList refl_args(ArgTypes&&... args) {
         auto arg_tuple = std::make_tuple(std::addressof(args)...);
         auto arg_list = new RawArg[sizeof...(ArgTypes)];
+
         assign_raw_args(arg_list, arg_tuple);
-        return {arg_list, sizeof...(ArgTypes)};
+
+        std::pmr::vector<std::type_index> type_indices;
+        extract_type_indices(std::tuple<remove_cvref_t<ArgTypes>...>(), type_indices);
+
+        return {arg_list, type_indices, sizeof...(ArgTypes)};
     }
 
     /**
@@ -239,24 +319,39 @@ namespace simple_reflection {
      * A struct to represent a method of a class.
      */
     struct CallableWrapper {
+        // compatibility for API of older versions.
         std::any method;
         bool is_const = false;
 
-        explicit CallableWrapper(std::any method) : method(std::move(method)) {
-        }
+        CommonCallable callable;
+        std::type_index return_type;
+        std::pmr::vector<std::type_index> arg_types;
+        std::variant<std::type_index, std::monostate> parent_type;
 
-        explicit CallableWrapper(std::any method, const bool is_const) : method(std::move(method)), is_const(is_const) {
+        CallableWrapper(
+            std::any method,
+            CommonCallable callable,
+            std::type_index return_type,
+            std::pmr::vector<std::type_index>&& arg_types,
+            std::variant<std::type_index, std::monostate> parent_type,
+            bool is_const = false
+        ) : method(std::move(method)),
+            callable(std::move(callable)),
+            return_type(return_type),
+            arg_types(std::move(arg_types)),
+            parent_type(parent_type),
+            is_const(is_const) {
         }
     };
 
     class ReturnValueProxy {
         std::shared_ptr<void> ptr;
         size_t size;
-        const std::type_info& type_info;
+        std::type_index type_index = typeid(void);
 
     public:
         template <typename ValueType>
-        explicit ReturnValueProxy(ValueType&& ptr): type_info(typeid(ValueType)) {
+        explicit ReturnValueProxy(ValueType&& ptr): type_index(typeid(ValueType)) {
             this->ptr = std::make_shared<ValueType>(std::forward<ValueType>(ptr));
             this->size = sizeof(ValueType);
         }
@@ -269,36 +364,19 @@ namespace simple_reflection {
         [[nodiscard]] void* get_raw() const {
             return this->ptr.get();
         }
-    };
 
-    using CommonCallable = std::function<ReturnValueProxy (void*, void** args)>;
-
-#ifdef API_SET_NEW
-    struct CallableWrapper {
-        CommonCallable callable;
-        std::type_index return_type;
-        std::vector<std::type_index> arg_types;
-        std::variant<std::type_index, std::monostate> parent_type;
-        bool is_const = false;
-
-        CallableWrapper(
-                CommonCallable callable,
-                std::type_index return_type,
-                std::vector<std::type_index>&& arg_types,
-                std::variant<std::type_index, std::monostate> parent_type,
-                bool is_const = false
-        ) : callable(std::move(callable)),
-            return_type(return_type),
-            arg_types(std::move(arg_types)),
-            parent_type(parent_type),
-            is_const(is_const) {
+        [[nodiscard]] size_t get_size() const {
+            return this->size;
         }
 
-        ReturnValueProxy operator()(void* obj, void** args) const {
-            return callable(obj, args);
+        [[nodiscard]] std::type_index get_type_index() const {
+            return this->type_index;
+        }
+
+        [[nodiscard]] RawObjectWrapper to_object_wrapper() const {
+            return {this->get_raw(), this->get_type_index()};
         }
     };
-#endif
 
     // wtf is this!?
     template <typename ReturnType, typename ClassType, typename... ArgTypes, size_t... Indices>
@@ -344,12 +422,63 @@ namespace simple_reflection {
         return wrap_method_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
-    template <size_t I = 0, typename... Args>
-    constexpr void extract_type_indices(const std::tuple<Args...>&, std::vector<std::type_index>& indices) {
-        if constexpr (I < sizeof...(Args)) {
-            indices.emplace_back(typeid(std::tuple_element_t<I, std::tuple<Args...>>));
-            extract_type_indices<I + 1>(std::tuple<Args...>{}, indices);
-        }
+    template <typename ReturnType, typename ClassType, typename... ArgTypes, size_t... Indices>
+    auto wrap_method_const_impl(ReturnType (ClassType::*method)(ArgTypes...) const, std::index_sequence<Indices...>) {
+        return std::function<ReturnValueProxy (void*, RawArgList args)>(
+            [method](void* object, RawArgList args) -> ReturnValueProxy {
+                const auto cls = static_cast<ClassType *>(object);
+                if constexpr (std::is_void_v<ReturnType>) {
+                    (cls->*method)(
+                        std::forward<remove_cvref_t<ArgTypes>>(
+                            *reinterpret_cast<remove_cvref_t<ArgTypes> *>(*(args + Indices)))...);
+                    return ReturnValueProxy(0);
+                } else {
+                    auto ret = (cls->*method)(
+                        std::forward<remove_cvref_t<ArgTypes>>(
+                            *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
+                                *(args + Indices)))...);
+                    return ReturnValueProxy(std::move(ret));
+                }
+            });
+    }
+
+    template <typename ReturnType, typename ClassType, typename... ArgTypes>
+    auto wrap_method_const(ReturnType (ClassType::*method)(ArgTypes...) const) {
+        return wrap_method_const_impl(method, std::make_index_sequence<sizeof...(ArgTypes)>{});
+    }
+
+    /**
+     * Wrap a function into a std::function object.
+     * @note Note that the wrapped function takes an additional void pointer as the 1st argument.
+     * @note This is to make the behavior consistent with the wrapped method.
+     * @tparam ReturnType The return type of the function.
+     * @tparam ArgTypes The argument types of the function.
+     * @tparam Indices
+     * @param function The function to be wrapped.
+     * @return A std::function object that wraps the function.
+     */
+    template <typename ReturnType, typename... ArgTypes, size_t... Indices>
+    auto wrap_function_impl(std::function<ReturnType (ArgTypes...)> function, std::index_sequence<Indices...>) {
+        return std::function<ReturnValueProxy (void*, RawArgList args)>(
+            [function](void* placeholder, RawArgList args) -> ReturnValueProxy {
+                if constexpr (std::is_void_v<ReturnType>) {
+                    function(
+                        std::forward<remove_cvref_t<ArgTypes>>(
+                            *reinterpret_cast<remove_cvref_t<ArgTypes> *>(*(args + Indices)))...);
+                    return ReturnValueProxy(0);
+                } else {
+                    auto ret = function(
+                        std::forward<remove_cvref_t<ArgTypes>>(
+                            *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
+                                *(args + Indices)))...);
+                    return ReturnValueProxy(std::move(ret));
+                }
+            });
+    }
+
+    template <typename ReturnType, typename... ArgTypes>
+    auto wrap_function(std::function<ReturnType (ArgTypes...)> function) {
+        return wrap_function_impl(function, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
     /**
@@ -413,7 +542,14 @@ namespace simple_reflection {
         >
         ReflectionBase& register_function(std::string&& name, CallableType callable) {
             auto fn = static_cast<std::function<ReturnType(remove_cvref_t<ArgTypes>&&...)>>(std::move(callable));
-            m_funcs[name].push_back(CallableWrapper(fn));
+            auto wrapped_fn = wrap_function(fn);
+            m_funcs[name].emplace_back(
+                std::move(fn),
+                wrapped_fn,
+                typeid(ReturnType),
+                std::pmr::vector<std::type_index>{typeid(ArgTypes)...},
+                std::monostate(),
+                false);
             return *this;
         }
 
@@ -541,6 +677,14 @@ namespace simple_reflection {
             return nullptr;
         }
 
+        RawObjectWrapper get_member_as_wrapped_object(void* object, std::string&& name) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                return RawObjectWrapper(object + member.offset, member.type_info);
+            }
+            return RawObjectWrapper::none();
+        }
+
         /**
          * Register a method of a class.
          * @note For those methods which have multiple overloads, use another overload of register_method.
@@ -550,51 +694,40 @@ namespace simple_reflection {
         template <auto Method>
         ReflectionBase& register_method(std::string&& name) {
             constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
-            if (m_funcs.find(name) == m_funcs.end()) {
-                m_funcs[name] = std::pmr::vector<CallableWrapper>();
-            }
-
-            std::any parsed;
-            if constexpr (is_const) {
-                parsed = _parse_method_const(Method);
-            } else {
-                parsed = _parse_method(Method);
-            }
-
-            m_funcs[name].emplace_back(parsed, is_const);
-
-            return *this;
-        }
-
-#ifdef API_SET_NEW
-        template <auto Method>
-        ReflectionBase& register_method(std::string&& name) {
-            constexpr bool is_const = method_has_const_suffix<decltype(Method)>::value;
             using ReturnType = typename extract_method_types<decltype(Method)>::return_type;
             using ArgTypes = typename extract_method_types<decltype(Method)>::arg_types;
             using ClassType = typename extract_method_types<decltype(Method)>::class_type;
 
-            std::vector<std::type_index> arg_types;
-            constexpr size_t arg_count = std::tuple_size_v<ArgTypes>;
+            std::pmr::vector<std::type_index> arg_types;
             ArgTypes arg_types_tuple;
             extract_type_indices(arg_types_tuple, arg_types);
 
             if (m_funcs.find(name) == m_funcs.end()) {
-                m_funcs[name] = std::pmr::vector<CallableWrapperNew>();
+                m_funcs[name] = std::pmr::vector<CallableWrapper>();
             }
 
-            auto parsed = wrap_method(Method);
+            CommonCallable parsed;
+            std::any old_parsed;
+
+            if constexpr (is_const) {
+                parsed = wrap_method_const(Method);
+                old_parsed = _parse_method_const(Method);
+            } else {
+                parsed = wrap_method(Method);
+                old_parsed = _parse_method(Method);
+            }
+
             m_funcs[name].emplace_back(
-                    parsed,
-                    typeid(ReturnType),
-                    std::move(arg_types),
-                    typeid(ClassType),
-                    is_const
+                old_parsed,
+                parsed,
+                std::type_index(typeid(ReturnType)),
+                std::move(arg_types),
+                std::type_index(typeid(ClassType)),
+                is_const
             );
 
             return *this;
         }
-#endif
 
         /**
          * Register a method of a class.
@@ -619,15 +752,29 @@ namespace simple_reflection {
                 m_funcs[name] = std::pmr::vector<CallableWrapper>();
             }
 
-            std::any parsed;
+            CommonCallable parsed;
+            std::any old_parsed;
+
             if constexpr (is_const) {
-                parsed = _parse_method_const(Method);
+                parsed = wrap_method_const(Method);
+                old_parsed = _parse_method_const(Method);
             } else {
-                parsed = _parse_method(Method);
+                parsed = wrap_method(Method);
+                old_parsed = _parse_method(Method);
             }
 
-            m_funcs[name].emplace_back(parsed, is_const);
+            std::pmr::vector<std::type_index> arg_types;
+            std::tuple<remove_cvref_t<ArgTypes>...> arg_types_tuple;
+            extract_type_indices(arg_types_tuple, arg_types);
 
+            m_funcs[name].emplace_back(
+                old_parsed,
+                parsed,
+                std::type_index(typeid(ReturnType)),
+                std::move(arg_types),
+                std::type_index(typeid(ClassType)),
+                is_const
+            );
             return *this;
         }
 
@@ -861,6 +1008,68 @@ namespace simple_reflection {
                         const auto function = std::any_cast<std::function<ReturnType(remove_cvref_t<ArgTypes>&&...)>>(
                             fn.method);
                         return function(std::forward<ArgTypes>(args)...);
+                    }
+                }
+            }
+            throw method_not_found_exception(name);
+        }
+
+        ReturnValueProxy invoke_function(std::string&& name, const ArgList& args) {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn_overloads = find->second;
+                for (auto& fn: fn_overloads) {
+                    if (is_parameter_match(fn.arg_types, args.type_indices)) {
+                        // the nullptr here serves as a placeholder, since we don't need to pass the object to the function.
+                        ReturnValueProxy proxy = fn.callable(nullptr, args.get());
+                        return proxy;
+                    }
+                }
+            }
+            throw method_not_found_exception(name);
+        }
+
+        static bool is_parameter_match(
+            const std::pmr::vector<std::type_index>& parameters,
+            const std::pmr::vector<std::type_index>& actual_args) {
+            if (parameters.size() != actual_args.size()) {
+                return false;
+            }
+
+            for (size_t i = 0; i < parameters.size(); ++i) {
+                if (parameters[i] != actual_args[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        template <typename ClassType, std::enable_if_t<!std::is_void_v<ClassType>, bool>  = false>
+        ReturnValueProxy invoke_method(ClassType& object, std::string&& name, ArgList args) {
+            try {
+                return invoke_method(&object, std::move(name), std::move(args));
+            } catch (const method_not_found_exception&) {
+                throw method_not_found_exception(name);
+            }
+        }
+
+        template <typename ClassType, std::enable_if_t<!std::is_void_v<ClassType>, bool>  = false>
+        ReturnValueProxy invoke_method(ClassType* object, std::string&& name, ArgList args) {
+            try {
+                return invoke_method(static_cast<void *>(object), std::move(name), std::move(args));
+            } catch (const method_not_found_exception&) {
+                throw method_not_found_exception(name);
+            }
+        }
+
+        template <typename ClassType, std::enable_if_t<std::is_void_v<ClassType>, bool>  = false>
+        ReturnValueProxy invoke_method(ClassType* object, std::string&& name, ArgList args) {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn_overloads = find->second;
+                for (auto& fn: fn_overloads) {
+                    std::pmr::vector<std::type_index>& arg_types = args.type_indices;
+                    if (is_parameter_match(fn.arg_types, arg_types)) {
+                        ReturnValueProxy proxy = fn.callable(object, args.get());
+                        return proxy;
                     }
                 }
             }
