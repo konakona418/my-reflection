@@ -354,11 +354,11 @@ namespace simple_reflection {
             std::variant<std::type_index, std::monostate> parent_type,
             bool is_const = false
         ) : method(std::move(method)),
+            is_const(is_const),
             callable(std::move(callable)),
             return_type(return_type),
             arg_types(std::move(arg_types)),
-            parent_type(parent_type),
-            is_const(is_const) {
+            parent_type(parent_type) {
         }
     };
 
@@ -499,6 +499,24 @@ namespace simple_reflection {
         return wrap_function_impl(function, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
+    using NameTypeInfo = std::pair<std::string, std::type_index>;
+
+    using NameTypeInfoList = std::vector<NameTypeInfo>;
+    using NameTypeInfoMap = std::unordered_map<std::string, NameTypeInfo>;
+
+    // Return type, class type, argument types.
+    using MethodInfo = std::tuple<std::type_index, std::type_index, std::vector<std::type_index>>;
+    // Return type, argument types.
+    using FunctionInfo = std::tuple<std::type_index, std::vector<std::type_index>>;
+
+    using CallableInfo = std::variant<MethodInfo, FunctionInfo>;
+    using OverloadedCallableInfo = std::vector<CallableInfo>;
+
+    using NameCallableInfo = std::pair<std::string, OverloadedCallableInfo>;
+
+    using NameCallableInfoList = std::vector<NameCallableInfo>;
+    using NameCallableInfoMap = std::unordered_map<std::string, NameCallableInfo>;
+
     /**
      * A class for reflection.
      */
@@ -524,6 +542,21 @@ namespace simple_reflection {
             return std::any(std::move(fn));
         }
 
+        static CallableInfo _parse_callable(const CallableWrapper& func) {
+            if (std::holds_alternative<std::monostate>(func.parent_type)) {
+                FunctionInfo fn_info = std::make_tuple(
+                    func.return_type, std::vector<std::type_index>{
+                        func.arg_types.begin(),
+                        func.arg_types.end()
+                    });
+                return {fn_info};
+            }
+            MethodInfo fn_info = std::make_tuple(
+                func.return_type, std::get<std::type_index>(func.parent_type),
+                std::vector<std::type_index>{func.arg_types.begin(), func.arg_types.end()});
+            return {fn_info};
+        }
+
     public:
         ReflectionBase() = default;
 
@@ -546,6 +579,46 @@ namespace simple_reflection {
             m_offsets.emplace(std::move(name), Member(offset, is_const, typeid(MemberType)));
 
             return *this;
+        }
+
+        NameTypeInfoList get_member_list() {
+            NameTypeInfoList list;
+            for (const auto& [name, member]: m_offsets) {
+                list.emplace_back(name, member.type_info);
+            }
+            return list;
+        }
+
+        NameTypeInfoMap get_member_map() {
+            NameTypeInfoMap map;
+            for (const auto& [name, member]: m_offsets) {
+                map.emplace(name, NameTypeInfo(name, member.type_info));
+            }
+            return map;
+        }
+
+        NameCallableInfoList get_callable_list() {
+            NameCallableInfoList list;
+            for (const auto& [name, callable]: m_funcs) {
+                OverloadedCallableInfo info;
+                for (const auto& func: callable) {
+                    info.emplace_back(_parse_callable(func));
+                }
+                list.emplace_back(name, std::move(info));
+            }
+            return list;
+        }
+
+        NameCallableInfoMap get_callable_map() {
+            NameCallableInfoMap map;
+            for (const auto& [name, callable]: m_funcs) {
+                OverloadedCallableInfo info;
+                for (const auto& func: callable) {
+                    info.emplace_back(_parse_callable(func));
+                }
+                map.emplace(name, NameCallableInfo(name, std::move(info)));
+            }
+            return map;
         }
 
         template <
@@ -1056,7 +1129,7 @@ namespace simple_reflection {
         }
 
         template <typename ClassType, std::enable_if_t<!std::is_void_v<ClassType>, bool>  = false>
-        ReturnValueProxy invoke_method(ClassType& object, std::string&& name, ArgList args) {
+        ReturnValueProxy invoke_method(ClassType& object, std::string&& name, const ArgList& args) {
             try {
                 return invoke_method(&object, std::move(name), std::move(args));
             } catch (const method_not_found_exception&) {
@@ -1065,9 +1138,9 @@ namespace simple_reflection {
         }
 
         template <typename ClassType, std::enable_if_t<!std::is_void_v<ClassType>, bool>  = false>
-        ReturnValueProxy invoke_method(ClassType* object, std::string&& name, ArgList args) {
+        ReturnValueProxy invoke_method(ClassType* object, std::string&& name, const ArgList& args) {
             try {
-                return invoke_method(static_cast<void *>(object), std::move(name), std::move(args));
+                return invoke_method(static_cast<void *>(object), std::move(name), args);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
