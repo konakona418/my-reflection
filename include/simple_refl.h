@@ -20,6 +20,7 @@
 #include <sstream>
 #include <typeindex>
 #include <variant>
+#include <cstring>
 
 #define API_SET_OLD
 
@@ -189,6 +190,27 @@ namespace simple_reflection {
             return type_index == typeid(void);
         }
 
+        template <typename T>
+        [[nodiscard]] bool is_type() const {
+            return type_index == typeid(T);
+        }
+
+        template <typename T>
+        [[nodiscard]] T* into() const {
+            if (type_index == typeid(T)) {
+                return static_cast<T*>(object);
+            }
+            return nullptr;
+        }
+
+        template <typename T>
+        [[nodiscard]] T deref_into() const {
+            if (type_index == typeid(T)) {
+                return *static_cast<T*>(object);
+            }
+            throw std::runtime_error("Type mismatch");
+        }
+
         static RawObjectWrapper none() {
             return {nullptr, typeid(void)};
         }
@@ -222,7 +244,7 @@ namespace simple_reflection {
             this->size = size;
         }
 
-        explicit ArgList(RawObjectWrapperVec&& args) {
+        explicit ArgList(const RawObjectWrapperVec& args) {
             this->args = new RawArg[args.size()];
             for (size_t i = 0; i < args.size(); i++) {
                 this->args[i] = args[i].object;
@@ -231,17 +253,11 @@ namespace simple_reflection {
             this->size = args.size();
         }
 
-        static ArgList make_arg_list(std::pmr::vector<RawObjectWrapper>&& args) {
-            return ArgList(std::move(args));
-        }
-
-        ArgList(const ArgList&) = delete;
-
-        ArgList(ArgList&& other) noexcept {
-            args = other.args;
-            type_indices = std::move(other.type_indices);
+        ArgList(const ArgList& other) {
             size = other.size;
-            other.args = nullptr;
+            args = static_cast<void **>(std::malloc(sizeof(RawArg) * size));
+            std::memcpy(args, other.args, sizeof(RawArg) * other.size);
+            type_indices = other.type_indices;
         }
 
         ~ArgList() {
@@ -269,6 +285,10 @@ namespace simple_reflection {
         }
     };
 
+    inline ArgList make_arg_list(const RawObjectWrapperVec& args) {
+        return ArgList(args);
+    }
+
     template <size_t I = 0, typename... Args>
     constexpr void extract_type_indices(const std::tuple<Args...>&, std::pmr::vector<std::type_index>& indices) {
         if constexpr (I < sizeof...(Args)) {
@@ -285,7 +305,7 @@ namespace simple_reflection {
         }
     }
 
-    template <typename... ArgTypes>
+    template <typename... ArgTypes, std::enable_if_t<(sizeof...(ArgTypes) > 1), bool> = false>
     ArgList refl_args(ArgTypes&&... args) {
         auto arg_tuple = std::make_tuple(std::addressof(args)...);
         auto arg_list = new RawArg[sizeof...(ArgTypes)];
@@ -1062,11 +1082,11 @@ namespace simple_reflection {
         }
 
         template <typename ClassType, std::enable_if_t<std::is_void_v<ClassType>, bool>  = false>
-        ReturnValueProxy invoke_method(ClassType* object, std::string&& name, ArgList args) {
+        ReturnValueProxy invoke_method(ClassType* object, std::string&& name, const ArgList& args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
-                    std::pmr::vector<std::type_index>& arg_types = args.type_indices;
+                    const std::pmr::vector<std::type_index>& arg_types = args.type_indices;
                     if (is_parameter_match(fn.arg_types, arg_types)) {
                         ReturnValueProxy proxy = fn.callable(object, args.get());
                         return proxy;
