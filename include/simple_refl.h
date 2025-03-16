@@ -524,6 +524,8 @@ namespace simple_reflection {
         std::unordered_map<std::string, Member> m_offsets = {};
         std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
 
+        std::type_index m_base_type_index = typeid(void);
+
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {
             std::function<ReturnType(void*, remove_cvref_t<ArgTypes>&&...)> fn =
@@ -558,7 +560,15 @@ namespace simple_reflection {
         }
 
     public:
-        ReflectionBase() = default;
+        ReflectionBase() = delete;
+
+        explicit ReflectionBase(std::type_index base_type_index) : m_base_type_index(base_type_index) {
+
+        }
+
+        std::type_index get_class_type() const {
+            return m_base_type_index;
+        }
 
         /**
          * Register a member of a class.
@@ -1172,8 +1182,13 @@ namespace simple_reflection {
         }
     };
 
-    inline ReflectionBase make_reflection() {
-        return {};
+    inline ReflectionBase make_reflection(std::type_index type_index) {
+        return ReflectionBase(type_index);
+    }
+
+    template <typename ClassType>
+    ReflectionBase make_reflection() {
+        return ReflectionBase(typeid(ClassType));
     }
 }
 

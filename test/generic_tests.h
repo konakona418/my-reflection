@@ -31,7 +31,7 @@ namespace generic_tests {
         }
     };
 
-    static auto refl = simple_reflection::make_reflection()
+    static auto refl = simple_reflection::make_reflection<Vector3<float>>()
             .register_member<&Vector3<float>::x>("x")
             .register_member<&Vector3<float>::y>("y")
             .register_member<&Vector3<float>::z>("z")

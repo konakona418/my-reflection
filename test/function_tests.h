@@ -26,7 +26,7 @@ namespace function_tests {
         }
     };
 
-    static auto refl = simple_reflection::make_reflection()
+    static auto refl = simple_reflection::make_reflection<Vector3>()
             .register_member<&Vector3::x>("x")
             .register_member<&Vector3::y>("y")
             .register_member<&Vector3::z>("z")

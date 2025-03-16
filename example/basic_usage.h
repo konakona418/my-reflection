@@ -50,7 +50,7 @@ namespace basic_usage {
     };
 
     // create a reflection object to register the members and methods of Vector3.
-    static simple_reflection::ReflectionBase reflection = simple_reflection::make_reflection()
+    static simple_reflection::ReflectionBase reflection = simple_reflection::make_reflection<Vector3<float>>()
             // to register the 3 members of Vector3.
             .register_member<&Vector3<float>::x>("x")
             .register_member<&Vector3<float>::y>("y")
@@ -168,7 +168,9 @@ namespace basic_usage {
         auto add_args = simple_reflection::RawObjectWrapperVec{
             // note that we cannot use refl_args here,
             // for void* does not contain any valid type information for checks during method invocation.
-            simple_reflection::make_raw_object_wrapper(ptr2, type_info)
+            // we can use the type information we preserved earlier,
+            // but we can also fetch it from ReflectionBase, like this:
+            simple_reflection::make_raw_object_wrapper(ptr2, reflection.get_class_type())
         };
         auto add_args_parsed = refl_arg_list(add_args);
 
