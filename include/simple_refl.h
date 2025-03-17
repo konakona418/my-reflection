@@ -357,9 +357,10 @@ namespace simple_reflection {
         });
 
         auto* merged_args = new RawArg[size];
-        for (size_t i = 0; i < arg_lists.size(); i++) {
-            for (size_t j = 0; j < arg_lists[i].size; j++) {
-                merged_args[i * arg_lists[i].size + j] = arg_lists[i].args[j];
+        size_t offset = 0;
+        for (auto& arg_list : arg_lists) {
+            for (size_t j = 0; j < arg_list.size; j++) {
+                merged_args[offset++] = arg_list.args[j];
             }
         }
 
