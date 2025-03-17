@@ -51,6 +51,10 @@ namespace basic_usage {
             this->z = z;
             return x + y + z;
         }
+
+        float sum_mul(T x, int y, T z, T w) {
+            return x * y * z * w;
+        }
     };
 
     // create a reflection object to register the members and methods of Vector3.
@@ -61,6 +65,8 @@ namespace basic_usage {
             .register_member<&Vector3<float>::z>("z")
             .register_method<&Vector3<float>::fetch_add>("fetch_add")
             .register_method<&Vector3<float>::fetch_sub>("fetch_sub")
+            .register_method<&Vector3<float>::sum_three>("sum_three")
+            .register_method<&Vector3<float>::sum_mul>("sum_mul")
             // to register the 2 methods of Vector3 which has no overload.
             .register_method<&Vector3<float>::operator*>("operator*")
             // to register the overloaded method of Vector3.
@@ -128,7 +134,7 @@ namespace basic_usage {
         simple_reflection::PhantomDataHelper phantom;
 
         // here we use a helper function to convert the arguments to a simple_reflection::ArgList
-        auto args = simple_reflection::refl_args(1.0f, 2.0f, 3.0f);
+        auto args = make_args(1.0f, 2.0f, 3.0f);
 
         // then invoke the constructor of Vector3...
         auto proxy = reflection.invoke_function("ctor", args);
@@ -153,19 +159,19 @@ namespace basic_usage {
         std::cout << "vec.y: " << y_wrapped.deref_into<float>() << std::endl;
         std::cout << "vec.z: " << z_wrapped.deref_into<float>() << std::endl;
 
-        // convert the wrapped objects to a simple_reflection::RawObjectWrapperVec.
-        simple_reflection::RawObjectWrapperVec vec;
-        vec.push_back(x_wrapped);
-        vec.push_back(y_wrapped);
-        vec.push_back(z_wrapped);
-
-
         // can also set the value of the wrapped objects.
         x_wrapped.set_value(10.0f);
         std::cout << "vec.x after set: " << x_wrapped.deref_into<float>() << std::endl;
 
+        // convert the wrapped objects to a simple_reflection::RawObjectWrapperVec.
+        simple_reflection::RawObjectWrapperVec vec;
+        vec.push_back(x_wrapped);
+
         // we can then convert the wrapped objects to a simple_reflection::ArgList
         auto args2 = refl_arg_list(vec);
+
+        // and you can actually merge like this.
+        args2 = std::move(args2) | y_wrapped | z_wrapped;
 
         // we are about to rewrite the return value, so we need to duplicate the original one,
         // in order to avoid the original one being invalidated by the auto memory de-allocation of shared_ptr<void>.

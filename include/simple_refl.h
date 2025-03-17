@@ -22,6 +22,8 @@
 #include <variant>
 #include <numeric>
 
+#define make_args(...) simple_reflection::refl_args(__VA_ARGS__)
+
 /** Simple Reflection Library. */
 namespace simple_reflection {
     template <typename FullName>
@@ -323,10 +325,34 @@ namespace simple_reflection {
             }
             return wrappers;
         }
+
+        static ArgList empty() {
+            return {nullptr, {}, 0};
+        }
+
+        friend ArgList operator|(ArgList&& lhs, RawObjectWrapper rhs) {
+            return std::move(lhs) | ArgList(std::initializer_list{rhs});
+        }
+
+        friend ArgList operator|(RawObjectWrapper lhs, ArgList&& rhs) {
+            return ArgList(std::initializer_list{lhs}) | std::move(rhs);
+        }
+
+        friend ArgList operator|(ArgList&& lhs, const RawObjectWrapperVec& rhs) {
+            return std::move(lhs) | ArgList(rhs);
+        }
+
+        friend ArgList operator|(const RawObjectWrapperVec& lhs, ArgList&& rhs) {
+            return ArgList(lhs) | std::move(rhs);
+        }
     };
 
     inline ArgList refl_arg_list(const RawObjectWrapperVec& args) {
         return ArgList(args);
+    }
+
+    inline ArgList empty_arg_list() {
+        return ArgList::empty();
     }
 
     /**
