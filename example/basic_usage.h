@@ -184,15 +184,16 @@ namespace basic_usage {
                 << std::get<2>(result) << std::endl;
 
         // similar to the previous case, we need to duplicate the original one.
-        phantom.push(proxy.duplicate_inner());
+        // this is a simplified way to do so.
+        phantom << proxy;
 
         // and initializer list is also supported.
         proxy = reflection.invoke_method(ptr, "fetch_sub",
             merge_arg_list(
                 // and merging arg lists is also supported.
                 simple_reflection::ArgList {x_wrapped},
-                simple_reflection::refl_args(2.0f),
-                simple_reflection::refl_args(1.0f)));
+                simple_reflection::refl_args(2.0f))
+                | simple_reflection::refl_args(1.0f));
 
         std::cout << "vec.x after fetch_sub: " << x_wrapped.deref_into<float>() << std::endl;
         std::cout << "vec.y after fetch_sub: " << y_wrapped.deref_into<float>() << std::endl;
@@ -219,7 +220,8 @@ namespace basic_usage {
         };
         auto add_args_parsed = refl_arg_list(add_args);
 
-        phantom.push(proxy.duplicate_inner());
+        // also ok
+        proxy >> phantom;
 
         // invoke the method of Vector3, which takes 1 parameter, and returns another Vector3.
         proxy = reflection.invoke_method(ptr, "operator+", add_args_parsed);

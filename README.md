@@ -56,3 +56,8 @@ begin_test("my_test") {
 
 Feel free to use it for simple testing if you find it helpful.
 
+## Todo
+
+* Getters and setters.
+* Complete type erasure for members under more scenarios.
+

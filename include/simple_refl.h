@@ -282,6 +282,28 @@ namespace simple_reflection {
             delete[] args;
         }
 
+        friend ArgList operator|(ArgList&& lhs, ArgList&& rhs) {
+            auto merged_args = new RawArg[lhs.size + rhs.size];
+
+            for (size_t i = 0; i < lhs.size; i++) {
+                merged_args[i] = lhs.args[i];
+            }
+            for (size_t i = 0; i < rhs.size; i++) {
+                merged_args[i + lhs.size] = rhs.args[i];
+            }
+
+            auto type_indices = lhs.type_indices;
+            type_indices.insert(type_indices.end(), rhs.type_indices.begin(), rhs.type_indices.end());
+
+            delete[] lhs.args;
+            delete[] rhs.args;
+
+            lhs.args = nullptr;
+            rhs.args = nullptr;
+
+            return {merged_args, type_indices, lhs.size + rhs.size};
+        }
+
         [[nodiscard]] RawArgList get() const & {
             return args;
         }
@@ -315,25 +337,7 @@ namespace simple_reflection {
      * @return The merged ArgList.
      */
     inline ArgList merge_arg_list(ArgList&& lhs, ArgList&& rhs) {
-        auto merged_args = new RawArg[lhs.size + rhs.size];
-
-        for (size_t i = 0; i < lhs.size; i++) {
-            merged_args[i] = lhs.args[i];
-        }
-        for (size_t i = 0; i < rhs.size; i++) {
-            merged_args[i + lhs.size] = rhs.args[i];
-        }
-
-        auto type_indices = lhs.type_indices;
-        type_indices.insert(type_indices.end(), rhs.type_indices.begin(), rhs.type_indices.end());
-
-        delete[] lhs.args;
-        delete[] rhs.args;
-
-        lhs.args = nullptr;
-        rhs.args = nullptr;
-
-        return {merged_args, type_indices, lhs.size + rhs.size};
+        return std::move(lhs) | std::move(rhs);
     }
 
     /**
@@ -352,7 +356,9 @@ namespace simple_reflection {
         std::vector<ArgList> arg_lists;
         (arg_lists.emplace_back(std::forward<ArgTypes>(args)), ...);
 
-        size_t size = std::accumulate(arg_lists.begin(), arg_lists.end(), 0, [](size_t sum, const ArgList& arg_list) {
+        size_t size = std::accumulate(
+            arg_lists.begin(), arg_lists.end(), 0,
+            [](size_t sum, const ArgList& arg_list) {
             return sum + arg_list.size;
         });
 
@@ -454,6 +460,14 @@ namespace simple_reflection {
         }
     };
 
+    using PhantomData = std::shared_ptr<void>;
+
+    class PhantomDataProvider {
+    public:
+        virtual ~PhantomDataProvider() = default;
+        virtual PhantomData phantom() const = 0;
+    };
+
     /**
      * A struct to represent a return value of a method.
      * @note This class does not only serve as a proxy,
@@ -472,7 +486,7 @@ namespace simple_reflection {
      * do_something(ptr); // undefined behavior!
      * @endcode
      */
-    class ReturnValueProxy {
+    class ReturnValueProxy : public PhantomDataProvider {
         /**
          * pointer to the return value.
          * @note this does not only serve as a pointer,
@@ -553,12 +567,14 @@ namespace simple_reflection {
          * Convert the ReturnValueProxy to a RawObjectWrapper.
          * @return a RawObjectWrapper.
          */
-        [[nodiscard]] RawObjectWrapper to_object_wrapper() const {
+        [[nodiscard]] RawObjectWrapper to_wrapped() const {
             return {this->get_raw(), this->get_type_index()};
         }
-    };
 
-    using PhantomData = std::shared_ptr<void>;
+        [[nodiscard]] std::shared_ptr<void> phantom() const override {
+            return this->ptr;
+        }
+    };
 
     /**
      * A struct to represent a phantom data.
@@ -593,13 +609,28 @@ namespace simple_reflection {
             this->phantom_data.push_back(std::move(phantom));
         }
 
-        PhantomDataHelper& operator+=(PhantomData phantom) {
-            this->phantom_data.push_back(std::move(phantom));
+        void clear() {
+            this->phantom_data.clear();
+        }
+
+        PhantomDataHelper& operator<<(PhantomData rhs) {
+            this->push(std::move(rhs));
             return *this;
         }
 
-        void clear() {
-            this->phantom_data.clear();
+        PhantomDataHelper& operator<<(const PhantomDataProvider& rhs) {
+            this->push(std::move(rhs.phantom()));
+            return *this;
+        }
+
+        friend PhantomDataHelper& operator>>(PhantomData lhs, PhantomDataHelper& rhs) {
+            rhs.push(std::move(lhs));
+            return rhs;
+        }
+
+        friend PhantomDataHelper& operator>>(const PhantomDataProvider& lhs, PhantomDataHelper& rhs) {
+            rhs.push(std::move(lhs.phantom()));
+            return rhs;
         }
     };
 
