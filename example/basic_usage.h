@@ -10,6 +10,15 @@
 #include "simple_refl.h"
 
 namespace basic_usage {
+
+    class Vec3Internal {
+        int a = 0;
+    public:
+        int r, g, b;
+
+        Vec3Internal(int r, int g, int b) : r(r), g(g), b(b) {
+        }
+    };
     /**
      * Here is a class for demonstrating the usage of simple_refl.
      * @tparam T Type of the member.
@@ -18,6 +27,7 @@ namespace basic_usage {
     class Vector3 {
     public:
         T x, y, z;
+        Vec3Internal internal = {0, 0, 0};
 
         Vector3() : x(0), y(0), z(0) {
         }
@@ -59,15 +69,16 @@ namespace basic_usage {
 
     // create a reflection object to register the members and methods of Vector3.
     static auto& reflection = simple_reflection::make_reflection<Vector3<float>>()
-            // to register the 3 members of Vector3.
+            // to register the members of Vector3.
             .register_member<&Vector3<float>::x>("x")
             .register_member<&Vector3<float>::y>("y")
             .register_member<&Vector3<float>::z>("z")
+            .register_member<&Vector3<float>::internal>("internal")
+            // to register the methods of Vector3.
             .register_method<&Vector3<float>::fetch_add>("fetch_add")
             .register_method<&Vector3<float>::fetch_sub>("fetch_sub")
             .register_method<&Vector3<float>::sum_three>("sum_three")
             .register_method<&Vector3<float>::sum_mul>("sum_mul")
-            // to register the 2 methods of Vector3 which has no overload.
             .register_method<&Vector3<float>::operator*>("operator*")
             // to register the overloaded method of Vector3.
             .register_method<Vector3<float>, Vector3<float>, float>("operator+", &Vector3<float>::operator+)
@@ -168,10 +179,8 @@ namespace basic_usage {
         vec.push_back(x_wrapped);
 
         // we can then convert the wrapped objects to a simple_reflection::ArgList
-        auto args2 = refl_arg_list(vec);
-
-        // and you can actually merge like this.
-        args2 = std::move(args2) | y_wrapped | z_wrapped;
+        // and you can actually merge arguments like this.
+        auto args2 = refl_arg_list(vec) | y_wrapped | z_wrapped;
 
         // we are about to rewrite the return value, so we need to duplicate the original one,
         // in order to avoid the original one being invalidated by the auto memory de-allocation of shared_ptr<void>.
@@ -231,6 +240,11 @@ namespace basic_usage {
 
         // invoke the method of Vector3, which takes 1 parameter, and returns another Vector3.
         proxy = reflection.invoke_method(ptr, "operator+", add_args_parsed);
+
+        /** this has the same effect with the previous invocation,
+         as ReturnValueProxy::to_wrapped() preserves the type information:
+        proxy = reflection.invoke_method(ptr, "operator+",
+            simple_reflection::empty_arg_list() | vec2_proxy.to_wrapped());*/
         auto ptr_vec3 = proxy.get_raw();
 
         // get the members of the returned object.
@@ -242,6 +256,22 @@ namespace basic_usage {
         std::cout << "result of operator+: " << x_wrapped.deref_into<float>() << std::endl;
         std::cout << "result of operator+: " << y_wrapped.deref_into<float>() << std::endl;
         std::cout << "result of operator+: " << z_wrapped.deref_into<float>() << std::endl;
+
+        proxy >> phantom;
+
+        // and you can use comma separated arguments to invoke the method of Vector3,
+        // which takes 4 parameters, and returns a tuple.
+        // the way comma works is completely the same with the pipe operator.
+        proxy = reflection.invoke_method(ptr, "sum_mul",
+            (simple_reflection::empty_arg_list(), x_wrapped, make_args(1), y_wrapped, z_wrapped));
+
+        std::cout << "result of sum_mul: " << proxy.get<float>() << std::endl;
+
+        reflection.set_member(ptr, "internal", simple_reflection::wrap_object(Vec3Internal{1, 2, 3}));
+        auto internal = reflection.get_member_wrapped(ptr, "internal");
+        std::cout << "internal.r: " << internal.deref_into<Vec3Internal>().r << std::endl;
+        std::cout << "internal.g: " << internal.deref_into<Vec3Internal>().g << std::endl;
+        std::cout << "internal.b: " << internal.deref_into<Vec3Internal>().b << std::endl;
     }
 } // basic_usage
 

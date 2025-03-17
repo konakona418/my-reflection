@@ -21,6 +21,7 @@
 #include <typeindex>
 #include <variant>
 #include <numeric>
+#include <cstring>
 
 #define make_args(...) simple_reflection::refl_args(__VA_ARGS__)
 
@@ -234,6 +235,11 @@ namespace simple_reflection {
         return {object, typeid(T)};
     }
 
+    template <typename T>
+    RawObjectWrapper wrap_object(T&& object) {
+        return {std::addressof(object), typeid(T)};
+    }
+
     using RawArg = void *;
     using RawArgList = RawArg *;
 
@@ -306,6 +312,10 @@ namespace simple_reflection {
             return {merged_args, type_indices, lhs.size + rhs.size};
         }
 
+        friend ArgList operator,(ArgList&& lhs, ArgList&& rhs) {
+            return std::move(lhs) | std::move(rhs);
+        }
+
         [[nodiscard]] RawArgList get() const & {
             return args;
         }
@@ -343,6 +353,22 @@ namespace simple_reflection {
         }
 
         friend ArgList operator|(const RawObjectWrapperVec& lhs, ArgList&& rhs) {
+            return ArgList(lhs) | std::move(rhs);
+        }
+
+        friend ArgList operator,(ArgList&& lhs, RawObjectWrapper rhs) {
+            return std::move(lhs) | ArgList(std::initializer_list{rhs});
+        }
+
+        friend ArgList operator,(RawObjectWrapper lhs, ArgList&& rhs) {
+            return ArgList(std::initializer_list{lhs}) | std::move(rhs);
+        }
+
+        friend ArgList operator,(ArgList&& lhs, const RawObjectWrapperVec& rhs) {
+            return std::move(lhs) | ArgList(rhs);
+        }
+
+        friend ArgList operator,(const RawObjectWrapperVec& lhs, ArgList&& rhs) {
             return ArgList(lhs) | std::move(rhs);
         }
     };
@@ -446,14 +472,29 @@ namespace simple_reflection {
      */
     struct Member {
         size_t offset = 0;
+        size_t size = 0;
         bool is_const = false;
         const std::type_info& type_info;
 
-        explicit Member(const size_t offset, const std::type_info& type_info) : offset(offset), type_info(type_info) {
+        std::function<void(void*, void*)> setter;
+
+        template <typename MemberType>
+        Member init_setter() {
+            size_t offset = this->offset;
+            size_t size = sizeof(MemberType);
+            setter = [offset, size](void* obj, void* arg) {
+                auto* member = const_cast<remove_const_t<MemberType> *>(static_cast<MemberType*>(obj + offset));
+                std::memcpy(member, arg, size);
+            };
+            return *this;
         }
 
-        Member(const size_t offset, const bool is_const, const std::type_info& type_info) : offset(offset),
-            is_const(is_const), type_info(type_info) {
+        explicit Member(const size_t offset, const size_t size, const std::type_info& type_info)
+        : offset(offset), size(size), type_info(type_info) {
+        }
+
+        Member(const size_t offset, const size_t size, const bool is_const, const std::type_info& type_info)
+        : offset(offset), size(size), is_const(is_const), type_info(type_info) {
         }
     };
 
@@ -491,7 +532,7 @@ namespace simple_reflection {
     class PhantomDataProvider {
     public:
         virtual ~PhantomDataProvider() = default;
-        virtual PhantomData phantom() const = 0;
+        [[nodiscard]] virtual PhantomData phantom() const = 0;
     };
 
     /**
@@ -849,7 +890,9 @@ namespace simple_reflection {
                 )
             );
             constexpr bool is_const = std::is_const_v<extract_member_type_t<decltype(MemberPtr)>>;
-            m_offsets.emplace(std::move(name), Member(offset, is_const, typeid(MemberType)));
+            m_offsets.emplace(std::move(name),
+                Member(offset, sizeof(MemberType), is_const, typeid(MemberType))
+                .init_setter<MemberType>());
 
             return *this;
         }
@@ -1041,6 +1084,36 @@ namespace simple_reflection {
                 return RawObjectWrapper(object + member.offset, member.type_info);
             }
             return RawObjectWrapper::none();
+        }
+
+        /**
+         * Set the value of a member.
+         * @note This method includes direct operation on memory, which can be dangerous.
+         * @note Even if you are sure that the type matches,
+         * @note there's still a chance that undefined behavior occurs.
+         * @param object The pointer to the object.
+         * @param name The name of the member.
+         * @param value The pointer to the value you want to assign to the member.
+         */
+        void set_member(void* object, std::string&& name, void* value) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                member.setter(object, value);
+                return;
+            }
+            throw std::runtime_error("Member not found");
+        }
+
+        void set_member(void* object, std::string&& name, RawObjectWrapper&& value) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                if (value.type_index != member.type_info) {
+                    throw std::runtime_error("Type mismatch");
+                }
+                member.setter(object, value.object);
+                return;
+            }
+            throw std::runtime_error("Member not found");
         }
 
         /**
