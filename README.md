@@ -56,8 +56,8 @@ begin_test("my_test") {
 
 Feel free to use it for simple testing if you find it helpful.
 
-## Todo
+## License
 
-* Getters and setters.
-* Complete type erasure for members under more scenarios.
+This project is licensed under the GNU Affero General Public License v3.0.
 
+See `LICENSE` for more details.
