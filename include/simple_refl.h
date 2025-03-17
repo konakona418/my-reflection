@@ -750,12 +750,20 @@ namespace simple_reflection {
         return std::function<ReturnValueProxy (void*, RawArgList args)>(
             [method](void* object, RawArgList args) -> ReturnValueProxy {
                 const auto cls = static_cast<ClassType *>(object);
+                constexpr size_t arg_size = sizeof...(ArgTypes);
                 if constexpr (std::is_void_v<ReturnType>) {
+                    if constexpr (arg_size == 0) {
+                        (cls->*method)();
+                        return ReturnValueProxy(0);
+                    }
                     (cls->*method)(
                         std::forward<remove_cvref_t<ArgTypes>>(
                             *reinterpret_cast<remove_cvref_t<ArgTypes> *>(*(args + Indices)))...);
                     return ReturnValueProxy(0);
                 } else {
+                    if constexpr (arg_size == 0) {
+                        return ReturnValueProxy((cls->*method)());
+                    }
                     auto ret = (cls->*method)(
                         std::forward<remove_cvref_t<ArgTypes>>(
                             *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
@@ -784,12 +792,21 @@ namespace simple_reflection {
     auto wrap_function_impl(std::function<ReturnType (ArgTypes...)> function, std::index_sequence<Indices...>) {
         return std::function<ReturnValueProxy (void*, RawArgList args)>(
             [function](void* placeholder, RawArgList args) -> ReturnValueProxy {
+                constexpr size_t arg_size = sizeof...(ArgTypes);
                 if constexpr (std::is_void_v<ReturnType>) {
+                    if constexpr (arg_size == 0) {
+                        function();
+                        return ReturnValueProxy(0);
+                    }
                     function(
                         std::forward<remove_cvref_t<ArgTypes>>(
                             *reinterpret_cast<remove_cvref_t<ArgTypes> *>(*(args + Indices)))...);
                     return ReturnValueProxy(0);
                 } else {
+                    if constexpr (arg_size == 0) {
+                        auto ret = function();
+                        return ReturnValueProxy(std::move(ret));
+                    }
                     auto ret = function(
                         std::forward<remove_cvref_t<ArgTypes>>(
                             *reinterpret_cast<remove_cvref_t<ArgTypes> *>(
@@ -1283,7 +1300,8 @@ namespace simple_reflection {
          */
         template <
             typename ReturnType, typename ClassType, typename... ArgTypes,
-            std::enable_if_t<std::is_void_v<ReturnType>, bool>  = false
+            std::enable_if_t<std::is_void_v<ReturnType>, bool>  = false,
+            std::enable_if_t<(sizeof ...(ArgTypes) > 0), bool>  = false
         >
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
@@ -1331,7 +1349,7 @@ namespace simple_reflection {
          * @param name The name of the method.
          * @return The return value of the method.
          */
-        template <typename ReturnType>
+        template <typename ReturnType, std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false>
         ReturnType invoke_method(void* object, std::string&& name) {
             if (auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
@@ -1352,14 +1370,14 @@ namespace simple_reflection {
          * @param name The name of the method.
          * @return The return value of the method.
          */
-        void invoke_method(void* object, std::string&& name) {
+        template <typename ReturnType, std::enable_if_t<std::is_void_v<ReturnType>, bool>  = false>
+        ReturnType invoke_method(void* object, std::string&& name) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
                     if (can_cast_to<std::function<void(void*)>>(fn.method)) {
                         const auto method = std::any_cast<std::function<void(void*)>>(fn.method);
                         method(object);
-                        return;
                     }
                 }
             }
@@ -1459,6 +1477,19 @@ namespace simple_reflection {
             throw method_not_found_exception(name);
         }
 
+        ReturnValueProxy invoke_function(std::string&& name) {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn_overloads = find->second;
+                for (auto& fn: fn_overloads) {
+                    if (fn.arg_types.empty()) {
+                        ReturnValueProxy proxy = fn.callable(nullptr, nullptr);
+                        return proxy;
+                    }
+                }
+            }
+            throw method_not_found_exception(name);
+        }
+
         static bool is_parameter_match(
             const std::pmr::vector<std::type_index>& parameters,
             const std::pmr::vector<std::type_index>& actual_args) {
@@ -1502,6 +1533,18 @@ namespace simple_reflection {
                         ReturnValueProxy proxy = fn.callable(object, args.get());
                         return proxy;
                     }
+                }
+            }
+            throw method_not_found_exception(name);
+        }
+
+        template <typename ClassType>
+        ReturnValueProxy invoke_method(ClassType* object, std::string&& name) {
+            if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
+                auto fn_overloads = find->second;
+                for (auto& fn: fn_overloads) {
+                    ReturnValueProxy proxy = fn.callable(object, nullptr);
+                    return proxy;
                 }
             }
             throw method_not_found_exception(name);

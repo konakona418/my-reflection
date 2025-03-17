@@ -148,7 +148,7 @@ namespace basic_tests {
     void test_method_no_ret_no_param() {
         auto vec = static_cast<Vector3>(Vector3(1.0f, 2.0f, 3.0f));
 
-        refl.invoke_method<void>(vec, "add_x_by_1");
+        refl.invoke_method(vec, "add_x_by_1");
         std::cout << vec.x << std::endl;
         assert(vec.x == 2.0f);
     }

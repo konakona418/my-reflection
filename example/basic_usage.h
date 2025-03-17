@@ -65,6 +65,10 @@ namespace basic_usage {
         float sum_mul(T x, int y, T z, T w) {
             return x * y * z * w;
         }
+
+        float len() {
+            return std::sqrt(x * x + y * y + z * z);
+        }
     };
 
     // create a reflection object to register the members and methods of Vector3.
@@ -79,6 +83,7 @@ namespace basic_usage {
             .register_method<&Vector3<float>::fetch_sub>("fetch_sub")
             .register_method<&Vector3<float>::sum_three>("sum_three")
             .register_method<&Vector3<float>::sum_mul>("sum_mul")
+            .register_method<&Vector3<float>::len>("len")
             .register_method<&Vector3<float>::operator*>("operator*")
             // to register the overloaded method of Vector3.
             .register_method<Vector3<float>, Vector3<float>, float>("operator+", &Vector3<float>::operator+)
@@ -272,6 +277,10 @@ namespace basic_usage {
         std::cout << "internal.r: " << internal.deref_into<Vec3Internal>().r << std::endl;
         std::cout << "internal.g: " << internal.deref_into<Vec3Internal>().g << std::endl;
         std::cout << "internal.b: " << internal.deref_into<Vec3Internal>().b << std::endl;
+
+        proxy >> phantom;
+
+        proxy = reflection.invoke_method(ptr, "len");
     }
 } // basic_usage
 
