@@ -10,6 +10,7 @@
 #include <vector>
 #include <unordered_map>
 #include <iostream>
+#include <stack>
 #include <string>
 
 namespace json_parser {
@@ -28,6 +29,14 @@ namespace json_parser {
             JsonArray,
             JsonMap
         > value;
+
+        bool operator==(const JsonObject& rhs) const {
+            return value == rhs.value;
+        }
+
+        bool operator!=(const JsonObject& rhs) const {
+            return value != rhs.value;
+        }
     };
 
     namespace _internal {
@@ -110,6 +119,40 @@ namespace json_parser {
             }
             ++it;
         }
+
+        inline bool is_left_bracket(char c) {
+            return c == '[' || c == '{' || c == '(';
+        }
+
+        inline bool is_right_bracket(char c) {
+            return c == ']' || c == '}' || c == ')';
+        }
+
+        inline bool bracket_match(char left, char right) {
+            return (left == '[' && right == ']') || (left == '{' && right == '}') || (left == '(' && right == ')');
+        }
+
+        inline bool check_brackets(const std::string& str) {
+            std::stack<char> brackets;
+            for (const char& it : str) {
+                if (is_left_bracket(it)) {
+                    brackets.push(it);
+                } else if (is_right_bracket(it)) {
+                    if (brackets.empty()) {
+                        throw std::runtime_error("brackets error");
+                    }
+                    if (bracket_match(brackets.top(), it)) {
+                        brackets.pop();
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            while (!brackets.empty()) {
+                return false;
+            }
+            return true;
+        }
     }
 
     inline void print_object(JsonObject object) {
@@ -132,21 +175,33 @@ namespace json_parser {
                 std::cout << (std::get<bool>(object.value) ? "true" : "false");
                 break;
             case 5:
-                std::cout << "[";
-                for (const auto& item: std::get<JsonArray>(object.value)) {
-                    print_object(item);
-                    std::cout << ",";
-                }
-                std::cout << "]";
+                do {
+                    std::cout << "[";
+                    size_t i = 0;
+                    size_t size = std::get<JsonArray>(object.value).size();
+                    for (const auto& item: std::get<JsonArray>(object.value)) {
+                        print_object(item);
+                        if (++i != size) {
+                            std::cout << ",";
+                        }
+                    }
+                    std::cout << "]";
+                } while (false);
                 break;
             case 6:
-                std::cout << "{";
-                for (const auto& [key, value]: std::get<JsonMap>(object.value)) {
-                    std::cout << "\"" << key << "\"" << ":";
-                    print_object(value);
-                    std::cout << ",";
-                }
-                std::cout << "}";
+                do {
+                    size_t i = 0;
+                    size_t size = std::get<JsonMap>(object.value).size();
+                    std::cout << "{";
+                    for (const auto& [key, value]: std::get<JsonMap>(object.value)) {
+                        std::cout << "\"" << key << "\"" << ":";
+                        print_object(value);
+                        if (++i != size) {
+                            std::cout << ",";
+                        }
+                    }
+                    std::cout << "}";
+                } while (false);
                 break;
             default:
                 std::cout << "unknown";
@@ -199,10 +254,14 @@ namespace json_parser {
     inline JsonArray parse_json_array(std::string::const_iterator& it) {
         JsonArray result;
         while (*++it != ']') {
+            _internal::skip_empty(it);
             if (*it == ',') {
                 ++it;
             }
             _internal::skip_empty(it);
+            if (*it == ']') {
+                return result;
+            }
             JsonObject object = {parse_json_object(it)};
             result.push_back(object);
         }
@@ -227,6 +286,12 @@ namespace json_parser {
         JsonMap result;
         while (*++it != '}') {
             _internal::skip_empty(it);
+            if (*it == ',') {
+                ++it;
+            }
+            if (*it == '}') {
+                return result;
+            }
             if (*it == '"') {
                 std::string key = parse_json_string(it);
                 _internal::skip_empty(it);
@@ -242,6 +307,10 @@ namespace json_parser {
         if (json_str.empty()) {
             result.value = std::monostate();
             return result;
+        }
+
+        if (!_internal::check_brackets(json_str)) {
+            throw std::runtime_error("brackets are not balanced");
         }
 
         auto it = json_str.begin();
