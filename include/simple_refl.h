@@ -22,6 +22,7 @@
 #include <variant>
 #include <numeric>
 #include <cstring>
+#include <stack>
 
 #define make_args(...) simple_reflection::refl_args(__VA_ARGS__)
 
@@ -176,6 +177,40 @@ namespace simple_reflection {
         }
     };
 
+    struct SharedObjectWrapper {
+        std::shared_ptr<void> object;
+        std::type_index type_index;
+
+        SharedObjectWrapper(std::shared_ptr<void> object, std::type_index type_index)
+            : object(std::move(object)), type_index(type_index) {
+        }
+
+        template <typename T>
+        explicit SharedObjectWrapper(std::shared_ptr<T> object) : object(std::move(object)), type_index(typeid(T)) {
+        }
+
+        template <typename T>
+        [[nodiscard]] T* into() const {
+            if (type_index == typeid(T)) {
+                return static_cast<T *>(object.get());
+            }
+            return nullptr;
+        }
+
+        template <typename T>
+        [[nodiscard]] T deref_into() const {
+            if (type_index == typeid(T)) {
+                return *static_cast<T *>(object.get());
+            }
+            return T();
+        }
+
+        template <typename T>
+        [[nodiscard]] bool is_type() const {
+            return type_index == typeid(T);
+        }
+    };
+
     struct RawObjectWrapper {
         void* object;
         std::type_index type_index;
@@ -208,6 +243,14 @@ namespace simple_reflection {
         [[nodiscard]] T deref_into() const {
             if (type_index == typeid(T)) {
                 return *static_cast<T *>(object);
+            }
+            throw std::runtime_error("Type mismatch");
+        }
+
+        template <typename T>
+        [[nodiscard]] std::shared_ptr<T> into_shared() {
+            if (type_index == typeid(T)) {
+                return std::make_shared<T>(*static_cast<T *>(object));
             }
             throw std::runtime_error("Type mismatch");
         }
@@ -411,12 +454,12 @@ namespace simple_reflection {
         size_t size = std::accumulate(
             arg_lists.begin(), arg_lists.end(), 0,
             [](size_t sum, const ArgList& arg_list) {
-            return sum + arg_list.size;
-        });
+                return sum + arg_list.size;
+            });
 
         auto* merged_args = new RawArg[size];
         size_t offset = 0;
-        for (auto& arg_list : arg_lists) {
+        for (auto& arg_list: arg_lists) {
             for (size_t j = 0; j < arg_list.size; j++) {
                 merged_args[offset++] = arg_list.args[j];
             }
@@ -482,19 +525,33 @@ namespace simple_reflection {
         Member init_setter() {
             size_t offset = this->offset;
             size_t size = sizeof(MemberType);
-            setter = [offset, size](void* obj, void* arg) {
-                auto* member = const_cast<remove_const_t<MemberType> *>(static_cast<MemberType*>(obj + offset));
-                std::memcpy(member, arg, size);
+            bool is_const = this->is_const;
+            setter = [offset, size, is_const](void* obj, void* arg) {
+                if (is_const) {
+                    throw std::runtime_error("Cannot assign to const member");
+                }
+                if constexpr (std::is_trivially_copy_assignable_v<MemberType>) {
+                    if constexpr (std::is_trivially_copy_assignable_v<MemberType>) {
+                        auto* member = const_cast<remove_const_t<MemberType> *>(static_cast<MemberType *>(
+                            obj + offset));
+                        *member = *static_cast<MemberType *>(arg);
+                    } else if constexpr (std::is_trivially_copyable_v<MemberType>) {
+                        auto* member = obj + offset;
+                        std::memcpy(member, arg, size);
+                    } else {
+                        throw std::runtime_error("MemberType is not trivially copyable");
+                    }
+                }
             };
             return *this;
         }
 
         explicit Member(const size_t offset, const size_t size, const std::type_info& type_info)
-        : offset(offset), size(size), type_info(type_info) {
+            : offset(offset), size(size), type_info(type_info) {
         }
 
         Member(const size_t offset, const size_t size, const bool is_const, const std::type_info& type_info)
-        : offset(offset), size(size), is_const(is_const), type_info(type_info) {
+            : offset(offset), size(size), is_const(is_const), type_info(type_info) {
         }
     };
 
@@ -532,6 +589,7 @@ namespace simple_reflection {
     class PhantomDataProvider {
     public:
         virtual ~PhantomDataProvider() = default;
+
         [[nodiscard]] virtual PhantomData phantom() const = 0;
     };
 
@@ -635,7 +693,11 @@ namespace simple_reflection {
          * @return a RawObjectWrapper.
          */
         [[nodiscard]] RawObjectWrapper to_wrapped() const {
-            return {this->get_raw(), this->get_type_index()};
+            return {this->ptr.get(), this->type_index};
+        }
+
+        [[nodiscard]] SharedObjectWrapper to_shared() const {
+            return {this->ptr, this->type_index};
         }
 
         [[nodiscard]] std::shared_ptr<void> phantom() const override {
@@ -650,11 +712,17 @@ namespace simple_reflection {
      * while keeping the memory valid.
      */
     class PhantomDataHelper {
-        std::vector<PhantomData> phantom_data = {};
+        std::stack<PhantomData> phantom_data = {};
 
     public:
         PhantomDataHelper() {
-            this->phantom_data.reserve(16);
+            this->phantom_data = {};
+        }
+
+        ~PhantomDataHelper() {
+            while (!this->phantom_data.empty()) {
+                this->phantom_data.pop();
+            }
         }
 
         PhantomDataHelper(const PhantomDataHelper& other) {
@@ -673,11 +741,13 @@ namespace simple_reflection {
         }
 
         void push(PhantomData phantom) {
-            this->phantom_data.push_back(std::move(phantom));
+            this->phantom_data.push(std::move(phantom));
         }
 
         void clear() {
-            this->phantom_data.clear();
+            while (!this->phantom_data.empty()) {
+                this->phantom_data.pop();
+            }
         }
 
         PhantomDataHelper& operator<<(PhantomData rhs) {
@@ -908,8 +978,8 @@ namespace simple_reflection {
             );
             constexpr bool is_const = std::is_const_v<extract_member_type_t<decltype(MemberPtr)>>;
             m_offsets.emplace(std::move(name),
-                Member(offset, sizeof(MemberType), is_const, typeid(MemberType))
-                .init_setter<MemberType>());
+                              Member(offset, sizeof(MemberType), is_const, typeid(MemberType))
+                              .init_setter<MemberType>());
 
             return *this;
         }
@@ -979,9 +1049,20 @@ namespace simple_reflection {
          * @param object The pointer to the object.
          * @param name The name of the method.
          */
-        template <typename MemberType, typename ClassType>
+        template <
+            typename MemberType, typename ClassType,
+            std::enable_if_t<!std::is_pointer_v<ClassType>, bool>  = false
+        >
         MemberType* get_member_ref(ClassType& object, std::string&& name) noexcept {
             return get_member_ref<MemberType, ClassType>(&object, std::move(name));
+        }
+
+        template <
+            typename MemberType, typename ClassType,
+            std::enable_if_t<!std::is_pointer_v<ClassType>, bool>  = false
+        >
+        MemberType* get_member_ref(ClassType& object, std::string& name) noexcept {
+            return get_member_ref<MemberType, ClassType>(&object, name);
         }
 
         /**
@@ -996,6 +1077,11 @@ namespace simple_reflection {
         template <typename MemberType, typename ClassType>
         const MemberType* get_const_member_ref(ClassType& object, std::string&& name) noexcept {
             return get_const_member_ref<MemberType, ClassType>(&object, std::move(name));
+        }
+
+        template <typename MemberType, typename ClassType>
+        const MemberType* get_const_member_ref(ClassType& object, std::string& name) noexcept {
+            return get_const_member_ref<MemberType, ClassType>(&object, name);
         }
 
         /**
@@ -1043,6 +1129,11 @@ namespace simple_reflection {
                 return static_cast<MemberType *>(reinterpret_cast<void *>(object) + member.offset);
             }
             return nullptr;
+        }
+
+        template <typename MemberType, typename ClassType>
+        MemberType* get_member_ref(ClassType* object, std::string& name) noexcept {
+            return get_member_ref<MemberType, ClassType>(object, std::move(name));
         }
 
         /**
@@ -1121,7 +1212,40 @@ namespace simple_reflection {
             throw std::runtime_error("Member not found");
         }
 
-        void set_member(void* object, std::string&& name, RawObjectWrapper&& value) {
+        void set_member(void* object, std::string& name, void* value) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                member.setter(object, value);
+                return;
+            }
+            throw std::runtime_error("Member not found");
+        }
+
+        void set_member(void* object, std::string&& name, RawObjectWrapper& value) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                if (value.type_index != member.type_info) {
+                    throw std::runtime_error("Type mismatch");
+                }
+                member.setter(object, value.object);
+                return;
+            }
+            throw std::runtime_error("Member not found");
+        }
+
+        void set_member(void* object, std::string& name, RawObjectWrapper& value) {
+            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
+                const auto& member = find->second;
+                if (value.type_index != member.type_info) {
+                    throw std::runtime_error("Type mismatch");
+                }
+                member.setter(object, value.object);
+                return;
+            }
+            throw std::runtime_error("Member not found");
+        }
+
+        void set_member(void* object, std::string& name, RawObjectWrapper&& value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 if (value.type_index != member.type_info) {
