@@ -6,6 +6,7 @@
 #define BASIC_USAGE_H
 
 #include <iostream>
+#include <cmath>
 
 #include "simple_refl.h"
 
@@ -272,6 +273,7 @@ namespace basic_usage {
 
         std::cout << "result of sum_mul: " << proxy.get<float>() << std::endl;
 
+        // this is another way to set the value of a member, which allows type erasure.
         reflection.set_member(ptr, "internal", simple_reflection::wrap_object(Vec3Internal{1, 2, 3}));
         auto internal = reflection.get_member_wrapped(ptr, "internal");
         std::cout << "internal.r: " << internal.deref_into<Vec3Internal>().r << std::endl;
@@ -281,6 +283,7 @@ namespace basic_usage {
         proxy >> phantom;
 
         proxy = reflection.invoke_method(ptr, "len");
+        std::cout << "result of len: " << proxy.get<float>() << std::endl;
     }
 } // basic_usage
 

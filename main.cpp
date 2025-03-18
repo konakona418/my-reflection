@@ -25,7 +25,7 @@ int main() {
 #ifdef EXAMPLE
     // basic_usage::demonstrate();
     // basic_usage::demonstrate_type_erasure();
-    json_parser::test_parse_json();
+    json_parser_test::test_parse_json();
 #endif
     return 0;
 }
