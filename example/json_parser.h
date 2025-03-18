@@ -46,7 +46,7 @@ namespace json_parser {
         }
 
         inline bool is_empty_char(char c) {
-            return c == ' ' || c == '\t';
+            return c == ' ' || c == '\t' || c == '\n' || c == '\r';
         }
 
         inline char convert_escape_char(char c) {
@@ -324,8 +324,19 @@ namespace json_parser {
     }
 }
 
-inline simple_reflection::PhantomDataHelper phantom;
 namespace json_mapper {
+
+    template <typename T>
+    class JsonVector : public std::vector<T> {
+    public:
+        std::type_index type_index = typeid(T);
+
+        JsonVector() = default;
+
+        void push_back(T&& value) {
+            std::vector<T>::push_back(std::move(value));
+        }
+    };
 
     inline bool is_json_primitives(std::type_index type_index) {
         return type_index == typeid(std::string) ||
@@ -335,8 +346,58 @@ namespace json_mapper {
                type_index == typeid(std::monostate);
     }
 
+    simple_reflection::ReturnValueProxy map_fields(simple_reflection::ReflectionBase& reflection,
+                                                          const json_parser::JsonMap& map,
+                                                          simple_reflection::PhantomDataHelper& phantom);
+
+    inline simple_reflection::ReturnValueProxy map_array(simple_reflection::ReflectionBase& reflection,
+                                                          const json_parser::JsonArray& array,
+                                                          simple_reflection::PhantomDataHelper& phantom) {
+        auto instance = reflection.invoke_function("ctor");
+        instance >> phantom;
+        auto array_ptr = instance.get_raw();
+
+        auto elem_type = *reflection.get_member_ref<std::type_index>(array_ptr, "type_index");
+        for (const auto& item: array) {
+            if (is_json_primitives(elem_type)) {
+                if (elem_type == typeid(std::string)) {
+                    reflection.invoke_method(array_ptr, "push_back",
+                        make_args(const_cast<std::string&&>(std::get<std::string>(item.value))));
+                    continue;
+                }
+                if (elem_type == typeid(int)) {
+                    reflection.invoke_method(array_ptr, "push_back",
+                        make_args(const_cast<int&&>(std::get<int>(item.value))));
+                    continue;
+                }
+                if (elem_type == typeid(double)) {
+                    reflection.invoke_method(array_ptr, "push_back",
+                        make_args(const_cast<double&&>(std::get<double>(item.value))));
+                    continue;
+                }
+                if (elem_type == typeid(bool)) {
+                    reflection.invoke_method(array_ptr, "push_back",
+                        make_args(const_cast<bool&&>(std::get<bool>(item.value))));
+                    continue;
+                }
+                if (elem_type == typeid(std::monostate)) {
+                    throw std::runtime_error("nullable type is not supported");
+                }
+            }
+
+            auto item_refl = simple_reflection::ReflectionRegistryBase::instance().get_reflection(elem_type);
+            auto proxy = map_fields(item_refl, std::get<json_parser::JsonMap>(item.value), phantom);
+            proxy >> phantom;
+            reflection.invoke_method(array_ptr, "push_back",
+                simple_reflection::empty_arg_list() | proxy.to_wrapped());
+        }
+
+        return instance;
+    }
+
     inline simple_reflection::ReturnValueProxy map_fields(simple_reflection::ReflectionBase& reflection,
-                                                          const json_parser::JsonMap& map) {
+                                                          const json_parser::JsonMap& map,
+                                                          simple_reflection::PhantomDataHelper& phantom) {
         auto instance = reflection.invoke_function("ctor");
         instance >> phantom;
         auto instance_ptr = instance.get_raw();
@@ -374,9 +435,19 @@ namespace json_mapper {
                 }
             }
 
+            simple_reflection::PhantomDataHelper field_phantom;
+
+            if (value.value.index() == 5) {
+                auto array_refl = simple_reflection::ReflectionRegistryBase::instance().get_reflection(field_type);
+                auto proxy = map_array(array_refl, std::get<json_parser::JsonArray>(value.value), field_phantom);
+                reflection.set_member(instance_ptr, field_name, proxy.to_wrapped());
+                continue;
+            }
+
             simple_reflection::ReflectionBase field_reflection =
                 simple_reflection::ReflectionRegistryBase::instance().get_reflection(field_type);
-            auto proxy = map_fields(field_reflection, std::get<json_parser::JsonMap>(value.value));
+
+            auto proxy = map_fields(field_reflection, std::get<json_parser::JsonMap>(value.value), field_phantom);
             reflection.set_member(instance_ptr, field_name, proxy.to_wrapped());
         }
         return instance;
@@ -384,12 +455,29 @@ namespace json_mapper {
 
     template <typename Serializable>
     simple_reflection::ReturnValueProxy from_json(const std::string& json_str) {
+        simple_reflection::PhantomDataHelper phantom;
         auto json_object = json_parser::parse_json_object(json_str);
         auto base = simple_reflection::ReflectionRegistryBase::instance().get_reflection(typeid(Serializable));
-        auto instance = map_fields(base,
-                                   std::get<json_parser::JsonMap>(json_object.value));
-        return instance;
+        if (json_object.value.index() == 5) {
+            return map_array(base, std::get<json_parser::JsonArray>(json_object.value), phantom);
+        }
+        return map_fields(base, std::get<json_parser::JsonMap>(json_object.value), phantom);
     }
+
+#define define_json_vector(_Type) \
+    static auto _refl_base_##_Type = simple_reflection::make_reflection<json_mapper::JsonVector<_Type>>() \
+        .register_method<json_mapper::JsonVector<_Type>, void, _Type&&>("push_back",\
+            &json_mapper::JsonVector<_Type>::push_back)\
+        .register_function<json_mapper::JsonVector<_Type>>("ctor",\
+            []() { return json_mapper::JsonVector<_Type>(); })\
+        .register_member<&json_mapper::JsonVector<_Type>::type_index>("type_index");
+
+    using stl_string = std::string;
+    define_json_vector(int);
+    define_json_vector(double);
+    define_json_vector(stl_string);
+    define_json_vector(bool);
+
 }
 
 namespace json_parser_test {
@@ -410,6 +498,18 @@ namespace json_parser_test {
         .register_member<&TestInternal::num>("num")
         .register_function<TestInternal>("ctor", []() { return TestInternal(); });
 
+    class TestListElem {
+    public:
+        int num;
+        std::string str;
+
+        TestListElem(): num(0) {}
+
+        void print() const {
+            std::cout << "(ListElem)" << "num: " << num << ", str: " << str << std::endl;
+        }
+    };
+
     class Test {
     public:
         std::string name;
@@ -418,14 +518,33 @@ namespace json_parser_test {
         bool gender;
 
         TestInternal internal = TestInternal();
+        json_mapper::JsonVector<int> numbers;
+        json_mapper::JsonVector<TestListElem> list;
 
         Test(): age(0), height(0), gender(false) {}
 
         void print() {
             std::cout << "name: " << name << ", age: " << age << ", height: " << height << ", gender: " << gender << std::endl;
+            std::cout << "internal: " << std::endl;
             internal.print();
+            std::cout << "(Array<int>)numbers: ";
+            for (const auto& num: numbers) {
+                std::cout << num << " ";
+            }
+            std::cout << std::endl;
+            std::cout << "(Array<ListElem>)list: " << std::endl;
+            for (const auto& elem: list) {
+                elem.print();
+            }
         }
     };
+
+    static auto test_list_elem_refl = simple_reflection::make_reflection<TestListElem>()
+        .register_member<&TestListElem::num>("num")
+        .register_member<&TestListElem::str>("str")
+        .register_function<TestListElem>("ctor", []() { return TestListElem(); });
+
+    define_json_vector(TestListElem);
 
     static auto test_refl = simple_reflection::make_reflection<Test>()
         .register_member<&Test::name>("name")
@@ -433,11 +552,36 @@ namespace json_parser_test {
         .register_member<&Test::height>("height")
         .register_member<&Test::gender>("gender")
         .register_member<&Test::internal>("internal")
+        .register_member<&Test::numbers>("numbers")
+        .register_member<&Test::list>("list")
         .register_function<Test>("ctor", []() { return Test(); });
 
     inline void test_parse_json() {
-        std::string json_str;
-        std::getline(std::cin, json_str);
+        std::string json_str = R"({
+            "name": "John Smith",
+            "age": 30,
+            "height": 1.8,
+            "gender": true,
+            "internal": {
+                "str": "Hello",
+                "num": 42
+            },
+            "numbers": [1, 2, 3, 4, 5],
+            "list": [
+                {
+                    "num": 1,
+                    "str": "A"
+                },
+                {
+                    "num": 2,
+                    "str": "B"
+                },
+                {
+                    "num": 3,
+                    "str": "C"
+                }
+            ]
+        })";
         auto result = json_parser::parse_json_object(json_str);
         auto proxy = json_mapper::from_json<Test>(json_str);
 
