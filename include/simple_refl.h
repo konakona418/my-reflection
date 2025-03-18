@@ -530,17 +530,15 @@ namespace simple_reflection {
                 if (is_const) {
                     throw std::runtime_error("Cannot assign to const member");
                 }
-                if constexpr (std::is_trivially_copy_assignable_v<MemberType>) {
-                    if constexpr (std::is_trivially_copy_assignable_v<MemberType>) {
-                        auto* member = const_cast<remove_const_t<MemberType> *>(static_cast<MemberType *>(
-                            obj + offset));
-                        *member = *static_cast<MemberType *>(arg);
-                    } else if constexpr (std::is_trivially_copyable_v<MemberType>) {
-                        auto* member = obj + offset;
-                        std::memcpy(member, arg, size);
-                    } else {
-                        throw std::runtime_error("MemberType is not trivially copyable");
-                    }
+                if constexpr (std::is_copy_assignable_v<MemberType>) {
+                    auto* member = const_cast<remove_const_t<MemberType> *>(static_cast<MemberType *>(
+                        obj + offset));
+                    *member = *static_cast<MemberType *>(arg);
+                } else if constexpr (std::is_trivially_copyable_v<MemberType>) {
+                    auto* member = obj + offset;
+                    std::memcpy(member, arg, size);
+                } else {
+                    throw std::runtime_error("MemberType is neither copy assignable nor trivially copyable");
                 }
             };
             return *this;
@@ -1076,7 +1074,7 @@ namespace simple_reflection {
          */
         template <typename MemberType, typename ClassType>
         const MemberType* get_const_member_ref(ClassType& object, std::string&& name) noexcept {
-            return get_const_member_ref<MemberType, ClassType>(&object, std::move(name));
+            return get_const_member_ref<MemberType, ClassType>(&object, name);
         }
 
         template <typename MemberType, typename ClassType>
@@ -1160,7 +1158,7 @@ namespace simple_reflection {
          * @return The pointer to the member.
          */
         template <typename MemberType, typename ClassType>
-        const MemberType* get_const_member_ref(ClassType* object, std::string&& name) noexcept {
+        const MemberType* get_const_member_ref(ClassType* object, std::string& name) noexcept {
             using type = typename remove_const<MemberType>::type;
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
@@ -1178,7 +1176,7 @@ namespace simple_reflection {
          * @param name The name of the member.
          * @return The pointer to the member.
          */
-        const void* get_const_member_ref(const void* object, std::string&& name) {
+        const void* get_const_member_ref(const void* object, const std::string& name) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 return object + member.offset;
@@ -1186,7 +1184,7 @@ namespace simple_reflection {
             return nullptr;
         }
 
-        RawObjectWrapper get_member_wrapped(void* object, std::string&& name) {
+        RawObjectWrapper get_member_wrapped(void* object, const std::string& name) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 return RawObjectWrapper(object + member.offset, member.type_info);
@@ -1203,7 +1201,7 @@ namespace simple_reflection {
          * @param name The name of the member.
          * @param value The pointer to the value you want to assign to the member.
          */
-        void set_member(void* object, std::string&& name, void* value) {
+        void set_member(void* object, const std::string& name, void* value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 member.setter(object, value);
@@ -1212,16 +1210,8 @@ namespace simple_reflection {
             throw std::runtime_error("Member not found");
         }
 
-        void set_member(void* object, std::string& name, void* value) {
-            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                const auto& member = find->second;
-                member.setter(object, value);
-                return;
-            }
-            throw std::runtime_error("Member not found");
-        }
-
-        void set_member(void* object, std::string&& name, RawObjectWrapper& value) {
+        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>, bool> = false>
+        void set_member(void* object, std::string&& name, WrapperType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 if (value.type_index != member.type_info) {
@@ -1233,19 +1223,8 @@ namespace simple_reflection {
             throw std::runtime_error("Member not found");
         }
 
-        void set_member(void* object, std::string& name, RawObjectWrapper& value) {
-            if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
-                const auto& member = find->second;
-                if (value.type_index != member.type_info) {
-                    throw std::runtime_error("Type mismatch");
-                }
-                member.setter(object, value.object);
-                return;
-            }
-            throw std::runtime_error("Member not found");
-        }
-
-        void set_member(void* object, std::string& name, RawObjectWrapper&& value) {
+        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>, bool> = false>
+        void set_member(void* object, std::string& name, WrapperType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 if (value.type_index != member.type_info) {
