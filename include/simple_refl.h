@@ -177,6 +177,21 @@ namespace simple_reflection {
         }
     };
 
+    class metadata_not_found_exception : public std::exception {
+        std::string metadata_name;
+
+    public:
+        explicit metadata_not_found_exception(std::string metadata_name) : metadata_name(std::move(metadata_name)) {
+        }
+
+        [[nodiscard]] const char* what() const noexcept override {
+            std::stringstream ss;
+            ss << "Metadata \"" << metadata_name << "\" not found.";
+            std::cerr << ss.str() << std::endl;
+            return ss.str().c_str();
+        }
+    };
+
     struct SharedObjectWrapper {
         std::shared_ptr<void> object;
         std::type_index type_index;
@@ -582,6 +597,19 @@ namespace simple_reflection {
         }
     };
 
+    struct Metadata {
+        std::type_index type_index;
+        std::any data;
+
+        Metadata(std::type_index type_index, std::any data) : type_index(type_index), data(std::move(data)) {
+        }
+    };
+
+    template <typename MetadataType>
+    Metadata make_metadata(MetadataType metadata) {
+        return Metadata(typeid(MetadataType), std::move(metadata));
+    }
+
     using PhantomData = std::shared_ptr<void>;
 
     class PhantomDataProvider {
@@ -913,6 +941,7 @@ namespace simple_reflection {
     class ReflectionBase {
         std::unordered_map<std::string, Member> m_offsets = {};
         std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
+        std::unordered_map<std::string, Metadata> m_metadata = {};
 
         std::type_index m_base_type_index = typeid(void);
 
@@ -1651,6 +1680,44 @@ namespace simple_reflection {
                 }
             }
             throw method_not_found_exception(name);
+        }
+
+        ReflectionBase& attach_metadata(std::string name, Metadata metadata) {
+            m_metadata.emplace(std::move(name), std::move(metadata));
+            return *this;
+        }
+
+        template <typename MetadataType>
+        ReflectionBase& attach_metadata(std::string name, MetadataType metadata) {
+            if constexpr (std::is_convertible_v<MetadataType, std::string>) {
+                m_metadata.emplace(std::move(name), make_metadata(std::move(std::string(metadata))));
+                return *this;
+            }
+            m_metadata.emplace(std::move(name), make_metadata(std::move(metadata)));
+            return *this;
+        }
+
+        Metadata get_metadata(const std::string& name) {
+            if (const auto find = m_metadata.find(name); find != m_metadata.end()) {
+                return find->second;
+            }
+            throw metadata_not_found_exception(name);
+        }
+
+        template <typename MetadataType>
+        MetadataType get_metadata_as(const std::string& name) {
+            if (const auto find = m_metadata.find(name); find != m_metadata.end()) {
+                if (find->second.type_index != typeid(MetadataType)) {
+                    throw std::runtime_error("Type mismatch");
+                }
+                std::any any = find->second.data;
+                return std::any_cast<MetadataType>(any);
+            }
+            throw metadata_not_found_exception(name);
+        }
+
+        bool has_metadata(const std::string& name) {
+            return m_metadata.find(name) != m_metadata.end();
         }
 
         template <typename ClassType, std::enable_if_t<std::is_default_constructible_v<ClassType>, bool>  = false>
