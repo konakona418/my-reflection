@@ -162,6 +162,30 @@ namespace simple_reflection {
         return std::any_cast<T>(std::addressof(a)) != nullptr;
     }
 
+    template <typename T>
+    std::string extract_type_name() {
+        std::string fn_sig;
+        std::string type_name;
+#if defined (__GNUC__) || defined (__clang__)
+        fn_sig = __PRETTY_FUNCTION__;
+        size_t start = fn_sig.find("[with T = ") + 9;
+        size_t end = fn_sig.rfind(']');
+        size_t semicolon = fn_sig.find(';', start);
+        if (semicolon < end) {
+            end = semicolon;
+        }
+        type_name = fn_sig.substr(start, end - start);
+#elif defined (_MSC_VER)
+        fn_sig = __FUNCSIG__;
+        size_t start = fn_sig.find("extract_type_name<") + 13;
+        size_t end = fn_sig.find(">(void)");
+        type_name = fn_sig.substr(start, end - start);
+#else
+        return std::string(typeid(T).name());
+#endif
+        return type_name;
+    }
+
     class method_not_found_exception final : public std::exception {
         std::string method_name;
 
@@ -944,6 +968,7 @@ namespace simple_reflection {
         std::unordered_map<std::string, Metadata> m_metadata = {};
 
         std::type_index m_base_type_index = typeid(void);
+        std::string m_base_type_name;
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {
@@ -981,11 +1006,16 @@ namespace simple_reflection {
     public:
         ReflectionBase() = delete;
 
-        explicit ReflectionBase(std::type_index base_type_index) : m_base_type_index(base_type_index) {
+        explicit ReflectionBase(std::type_index base_type_index, std::string&& base_type_name)
+            : m_base_type_index(base_type_index), m_base_type_name(std::move(base_type_name)) {
         }
 
-        std::type_index get_class_type() const {
+        std::type_index get_type() const {
             return m_base_type_index;
+        }
+
+        std::string get_type_string() const {
+            return m_base_type_name;
         }
 
         /**
@@ -1239,7 +1269,8 @@ namespace simple_reflection {
             throw std::runtime_error("Member not found");
         }
 
-        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>, bool> = false>
+        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>,
+            bool>  = false>
         void set_member(void* object, std::string&& name, WrapperType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
@@ -1252,7 +1283,8 @@ namespace simple_reflection {
             throw std::runtime_error("Member not found");
         }
 
-        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>, bool> = false>
+        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>,
+            bool>  = false>
         void set_member(void* object, std::string& name, WrapperType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
@@ -1764,7 +1796,8 @@ namespace simple_reflection {
 
         template <typename ClassType>
         ReflectionBase& register_base() {
-            register_base(typeid(ClassType), ReflectionBase(typeid(ClassType)));
+            register_base(typeid(ClassType), ReflectionBase(typeid(ClassType),
+                                                            extract_type_name<ClassType>()));
             return m_reflections.at(typeid(ClassType));
         }
 
@@ -1791,7 +1824,7 @@ namespace simple_reflection {
     };
 
     inline ReflectionBase& make_reflection(const std::type_index type_index) {
-        return ReflectionRegistryBase::instance().register_base(type_index, ReflectionBase(type_index));
+        return ReflectionRegistryBase::instance().register_base(type_index, ReflectionBase(type_index, "__NULL__"));
     }
 
     template <typename ClassType>
