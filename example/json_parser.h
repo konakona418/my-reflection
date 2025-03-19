@@ -156,7 +156,7 @@ namespace json_parser {
         }
     }
 
-    inline void print_object(JsonObject object, std::ostream& os = std::cout) {
+    inline void print_object(JsonObject object, std::ostream& os = std::cout, bool pretty_print = false, size_t indent = 4) {
         switch (object.value.index()) {
             case 0:
                 os << "null";
@@ -178,13 +178,25 @@ namespace json_parser {
             case 5:
                 do {
                     os << "[";
+                    if (pretty_print) {
+                        os << std::endl;
+                    }
                     size_t i = 0;
                     size_t size = std::get<JsonArray>(object.value).size();
                     for (const auto& item: std::get<JsonArray>(object.value)) {
-                        print_object(item);
-                        if (++i != size) {
-                            os << ",";
+                        if (pretty_print) {
+                            os << std::string(indent, ' ');
                         }
+                        print_object(item, os, pretty_print, indent + 4);
+                        if (++i != size) {
+                            os << ", ";
+                        }
+                        if (pretty_print) {
+                            os << std::endl;
+                        }
+                    }
+                    if (pretty_print) {
+                        os << std::string(indent - 4, ' ');
                     }
                     os << "]";
                 } while (false);
@@ -194,12 +206,24 @@ namespace json_parser {
                     size_t i = 0;
                     size_t size = std::get<JsonMap>(object.value).size();
                     os << "{";
+                    if (pretty_print) {
+                        os << std::endl;
+                    }
                     for (const auto& [key, value]: std::get<JsonMap>(object.value)) {
-                        os << "\"" << key << "\"" << ":";
-                        print_object(value);
-                        if (++i != size) {
-                            os << ",";
+                        if (pretty_print) {
+                            os << std::string(indent, ' ');
                         }
+                        os << "\"" << key << "\"" << ": ";
+                        print_object(value, os, pretty_print, indent + 4);
+                        if (++i != size) {
+                            os << ", ";
+                        }
+                        if (pretty_print) {
+                            os << std::endl;
+                        }
+                    }
+                    if (pretty_print) {
+                        os << std::string(indent - 4, ' ');
                     }
                     os << "}";
                 } while (false);
@@ -740,7 +764,7 @@ namespace json_parser_test {
         auto deserialized = proxy.to_wrapped().deref_into<Test>();
         deserialized.print();
 
-        print_object(json_mapper::dump_json_object(deserialized), std::cout);
+        print_object(json_mapper::dump_json_object(deserialized), std::cout, true);
         // print_object(result);
     }
 }
