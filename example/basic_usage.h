@@ -237,7 +237,7 @@ namespace basic_usage {
             // for void* does not contain any valid type information for checks during method invocation.
             // we can use the type information we preserved earlier,
             // but we can also fetch it from ReflectionBase, like this:
-            simple_reflection::wrap_object(ptr2, reflection.get_class_type())
+            simple_reflection::wrap_object(ptr2, reflection.get_type())
         };
         auto add_args_parsed = refl_arg_list(add_args);
 

@@ -13,6 +13,7 @@
 #include <string>
 
 #include <simple_refl.h>
+#include <test_helper.h>
 
 namespace json_parser {
     struct JsonObject;
@@ -388,6 +389,7 @@ namespace json_mapper {
     inline simple_reflection::ReturnValueProxy map_array(simple_reflection::ReflectionBase& reflection,
                                                          const json_parser::JsonArray& array,
                                                          simple_reflection::PhantomDataHelper& phantom) {
+        test_helper::dbg_print("mapping array with type: ", reflection.get_type_string());
         auto instance = reflection.invoke_function("ctor");
         instance >> phantom;
         auto array_ptr = instance.get_raw();
@@ -433,6 +435,7 @@ namespace json_mapper {
     inline simple_reflection::ReturnValueProxy map_fields(simple_reflection::ReflectionBase& reflection,
                                                           const json_parser::JsonMap& map,
                                                           simple_reflection::PhantomDataHelper& phantom) {
+        test_helper::dbg_print("mapping field with type: ", reflection.get_type_string());
         auto instance = reflection.invoke_function("ctor");
         instance >> phantom;
         auto instance_ptr = instance.get_raw();
@@ -502,6 +505,8 @@ namespace json_mapper {
     json_parser::JsonObject _dump_json_object(void* object, simple_reflection::ReflectionBase& reflection);
 
     inline json_parser::JsonObject _dump_json_array(void* object, simple_reflection::ReflectionBase& reflection) {
+        test_helper::dbg_print("dumping json array with type: ", reflection.get_type_string());
+
         simple_reflection::PhantomDataHelper phantom;
         auto member_type = *reflection.get_member_ref<std::type_index>(object, "type_index");
 
@@ -565,6 +570,7 @@ namespace json_mapper {
     inline json_parser::JsonObject _dump_json_object(void* object,
                                                      simple_reflection::ReflectionBase& reflection) {
         auto fields = reflection.get_member_map();
+        test_helper::dbg_print("dumping object with type: ", reflection.get_type_string());
 
         json_parser::JsonMap map;
 
@@ -603,18 +609,19 @@ namespace json_mapper {
                 }
             }
 
+
+            const auto field_ptr = reflection.get_member_wrapped(object, name);
             try {
                 auto field_reflection = simple_reflection::ReflectionRegistryBase::instance().
                         get_reflection(field_type);
                 if (field_reflection.has_metadata("json_object_type")) {
                     if (field_reflection.get_metadata_as<std::string>("json_object_type") == "array_like") {
-                        auto field_ptr = reflection.get_member_wrapped(object, name);
                         inner = _dump_json_array(field_ptr.object, field_reflection);
                         map.emplace(name, inner);
                         continue;
                     }
                 }
-                inner = _dump_json_object(object, field_reflection);
+                inner = _dump_json_object(field_ptr.object, field_reflection);
                 map.emplace(name, inner);
             } catch (const std::exception& e) {
                 // std::cout << e.what() << std::endl;
@@ -693,6 +700,7 @@ namespace json_parser_test {
 
         TestInternal internal = TestInternal();
         json_mapper::JsonVector<int> numbers;
+        json_mapper::JsonVector<std::string> strings;
         json_mapper::JsonVector<TestListElem> list;
 
         Test(): age(0), height(0), gender(false) {
@@ -729,6 +737,7 @@ namespace json_parser_test {
             .register_member<&Test::gender>("gender")
             .register_member<&Test::internal>("internal")
             .register_member<&Test::numbers>("numbers")
+            .register_member<&Test::strings>("strings")
             .register_member<&Test::list>("list")
             .register_function<Test>("ctor", []() { return Test(); });
 
@@ -743,6 +752,7 @@ namespace json_parser_test {
                 "num": 42
             },
             "numbers": [1, 2, 3, 4, 5],
+            "strings": ["abc", "def", "ghi"],
             "list": [
                 {
                     "num": 1,
@@ -760,8 +770,12 @@ namespace json_parser_test {
         })";
         auto proxy = json_mapper::from_json<Test>(json_str);
 
+        test_helper::StopWatch stopwatch;
+        stopwatch.start();
         auto deserialized = proxy.to_wrapped().deref_into<Test>();
+        stopwatch.end();
         deserialized.print();
+        test_helper::dbg_print("time elapsed: ", stopwatch.elapsed_ms(), "ms");
 
         print_object(json_mapper::dump_json_object(deserialized), std::cout, true);
         std::cout << std::endl;
