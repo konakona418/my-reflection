@@ -1831,6 +1831,7 @@ namespace simple_reflection {
 
     class ReflectionRegistryBase {
         std::pmr::unordered_map<std::type_index, ReflectionBase> m_reflections;
+        std::unordered_map<std::string, std::type_index> m_type_index_map = {};
 
     public:
         ReflectionRegistryBase() = default;
@@ -1851,9 +1852,22 @@ namespace simple_reflection {
 
         template <typename ClassType>
         ReflectionBase& register_base() {
-            register_base(typeid(ClassType), ReflectionBase(typeid(ClassType),
+            m_type_index_map.emplace(extract_type_name<ClassType>(), typeid(ClassType));
+            return register_base(typeid(ClassType), ReflectionBase(typeid(ClassType),
                                                             extract_type_name<ClassType>()));
-            return m_reflections.at(typeid(ClassType));
+        }
+
+        ReflectionBase& get_reflection(const std::string& type_name) {
+            try {
+                return m_reflections.at(m_type_index_map.at(type_name));
+            } catch (const std::out_of_range&) {
+                std::stringstream ss;
+                ss << "ReflectionRegistryBase not found for type with name. " <<
+                    "Perhaps you forgot to register it, " <<
+                        "or you did not register it with the override which supports this function: " <<
+                            type_name;
+                throw reflection_registry_not_found_exception(ss.str());
+            }
         }
 
         template <typename ClassType>
@@ -1878,7 +1892,7 @@ namespace simple_reflection {
         }
     };
 
-    inline ReflectionBase& make_reflection(const std::type_index type_index) {
+    [[deprecated]] inline ReflectionBase& make_reflection(const std::type_index type_index) {
         return ReflectionRegistryBase::instance().register_base(type_index, ReflectionBase(type_index, "__NULL__"));
     }
 

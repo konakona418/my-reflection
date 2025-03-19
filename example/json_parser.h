@@ -758,13 +758,17 @@ namespace json_parser_test {
                 }
             ]
         })";
-        auto result = json_parser::parse_json_object(json_str);
         auto proxy = json_mapper::from_json<Test>(json_str);
 
         auto deserialized = proxy.to_wrapped().deref_into<Test>();
         deserialized.print();
 
         print_object(json_mapper::dump_json_object(deserialized), std::cout, true);
+        std::cout << std::endl;
+
+        auto refl = simple_reflection::ReflectionRegistryBase::instance()
+            .get_reflection("json_mapper::JsonVector<std::string>");
+        std::cout << refl.get_type_string() << std::endl;
         // print_object(result);
     }
 }
