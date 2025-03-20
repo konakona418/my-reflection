@@ -14,8 +14,8 @@ namespace test_helper {
     class StopWatch {
         std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
         std::chrono::time_point<std::chrono::high_resolution_clock> end_time;
-    public:
 
+    public:
         StopWatch() = default;
 
         StopWatch(const StopWatch&) = delete;
@@ -32,7 +32,7 @@ namespace test_helper {
 
         [[nodiscard]] double elapsed_ms() const {
             return static_cast<double>(
-                std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count()) / 1000.0;
+                       std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count()) / 1000.0;
         }
     };
 

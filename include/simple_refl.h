@@ -1179,6 +1179,18 @@ namespace simple_reflection {
             return (base.*method)(std::forward<ArgTypes>(args)...);
         }
 
+        static std::optional<std::type_index> _search_method_in_base_classes(
+            ReflectionBase& current, const std::string& name) {
+            for (auto& base: current.m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (!reflection.has_method(name)) {
+                    return _search_method_in_base_classes(reflection, name);
+                }
+                return {base};
+            }
+            return std::nullopt;
+        }
+
     public:
         ReflectionBase() = delete;
 
@@ -1446,9 +1458,9 @@ namespace simple_reflection {
 
             for (auto base: m_derived_from) {
                 auto reflection = get_reflection(base);
-                if (auto propagated = _propagate(
+                if (auto propagated = _propagate<const MemberType *, ClassType *, std::string&>(
                     reflection,
-                    get_const_member_ref<MemberType, ClassType>, object, name); propagated != nullptr) {
+                    get_const_member_ref<MemberType, ClassType>, std::move(object), name); propagated != nullptr) {
                     return propagated;
                 }
             }
@@ -1694,12 +1706,13 @@ namespace simple_reflection {
             typename ReturnType,
             typename ClassType,
             typename... ArgTypes,
-            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false
+            std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false,
+            std::enable_if_t<!std::is_pointer_v<ClassType>, bool>  = false
         >
         ReturnType invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
                 return invoke_method<ReturnType, remove_cvref_t<ArgTypes>...>(
-                    &object, std::forward<std::string>(name),
+                    static_cast<void *>(&object), std::forward<std::string>(name),
                     std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
@@ -1718,7 +1731,7 @@ namespace simple_reflection {
         template <typename ReturnType, typename ClassType, std::enable_if_t<!std::is_void_v<ReturnType>, bool>  = false>
         ReturnType invoke_method(ClassType& object, std::string&& name) {
             try {
-                return invoke_method<ReturnType>(&object, std::forward<std::string>(name));
+                return invoke_method<ReturnType>(static_cast<void *>(&object), std::forward<std::string>(name));
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -1735,7 +1748,7 @@ namespace simple_reflection {
         template <typename ClassType>
         void invoke_method(ClassType& object, std::string&& name) {
             try {
-                invoke_method(&object, std::forward<std::string>(name));
+                invoke_method(static_cast<void *>(&object), std::forward<std::string>(name));
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
             }
@@ -1754,11 +1767,12 @@ namespace simple_reflection {
         template <
             typename ReturnType, typename ClassType, typename... ArgTypes,
             std::enable_if_t<std::is_void_v<ReturnType>, bool>  = false,
+            std::enable_if_t<!std::is_pointer_v<ClassType>, bool>  = false,
             std::enable_if_t<(sizeof ...(ArgTypes) > 0), bool>  = false
         >
         void invoke_method(ClassType& object, std::string&& name, ArgTypes&&... args) {
             try {
-                invoke_method<void, ArgTypes...>(&object, std::forward<std::string>(name),
+                invoke_method<void, ArgTypes...>(static_cast<void *>(&object), std::forward<std::string>(name),
                                                  std::forward<remove_cvref_t<ArgTypes>>(args)...);
             } catch (const method_not_found_exception&) {
                 throw method_not_found_exception(name);
@@ -1767,17 +1781,6 @@ namespace simple_reflection {
 
         bool has_method(const std::string& name) {
             return m_funcs.find(name) != m_funcs.end();
-        }
-
-        static std::optional<std::type_index> search_method_in_base_classes(ReflectionBase& current, const std::string& name) {
-            for (auto& base : current.m_derived_from) {
-                auto reflection = get_reflection(base);
-                if (!reflection.has_method(name)) {
-                    return search_method_in_base_classes(reflection, name);
-                }
-                return { base };
-            }
-            return std::nullopt;
         }
 
         /**
@@ -1807,11 +1810,12 @@ namespace simple_reflection {
                 }
             }
 
-            auto search = search_method_in_base_classes(*this, name);
+            auto search = _search_method_in_base_classes(*this, name);
             if (search.has_value()) {
                 auto reflection = get_reflection(search.value());
                 return reflection.invoke_method<ReturnType, ArgTypes...>(object, std::forward<std::string>(name),
-                                                std::forward<remove_cvref_t<ArgTypes>>(args)...);
+                                                                         std::forward<remove_cvref_t<ArgTypes>>(args)
+                                                                         ...);
             }
             throw method_not_found_exception(name);
         }
@@ -1836,7 +1840,7 @@ namespace simple_reflection {
                 }
             }
 
-            auto search = search_method_in_base_classes(*this, name);
+            auto search = _search_method_in_base_classes(*this, name);
             if (search.has_value()) {
                 auto reflection = get_reflection(search.value());
                 return reflection.invoke_method<ReturnType>(object, std::forward<std::string>(name));
@@ -1863,7 +1867,7 @@ namespace simple_reflection {
                 }
             }
 
-            auto search = search_method_in_base_classes(*this, name);
+            auto search = _search_method_in_base_classes(*this, name);
             if (search.has_value()) {
                 auto reflection = get_reflection(search.value());
                 return reflection.invoke_method<ReturnType>(object, std::forward<std::string>(name));
@@ -1880,9 +1884,12 @@ namespace simple_reflection {
          * @param args The arguments of the method.
          * @return The return value of the method.
          */
-        template <typename ReturnType, typename... ArgTypes, std::enable_if_t<std::is_void_v<ReturnType>, bool>  =
-                false>
-        void invoke_method(void* object, std::string&& name, ArgTypes&&... args) {
+        template <
+            typename ReturnType, typename... ArgTypes, typename ClassType,
+            std::enable_if_t<std::is_void_v<ReturnType>, bool>  = false,
+            std::enable_if_t<std::is_same_v<ClassType, void *>, bool>  = false
+        >
+        void invoke_method(ClassType object, std::string&& name, ArgTypes&&... args) {
             if (const auto find = m_funcs.find(name); find != m_funcs.end()) {
                 auto fn_overloads = find->second;
                 for (auto& fn: fn_overloads) {
@@ -1895,10 +1902,11 @@ namespace simple_reflection {
                 }
             }
 
-            const auto search = search_method_in_base_classes(*this, name);
+            const auto search = _search_method_in_base_classes(*this, name);
             if (search.has_value()) {
                 auto reflection = get_reflection(search.value());
-                reflection.invoke_method(object, std::move(name), std::forward<remove_cvref_t<ArgTypes>>(args)...);
+                reflection.invoke_method<ReturnType, ArgTypes...>(static_cast<void *>(object), std::move(name),
+                                                                  std::forward<remove_cvref_t<ArgTypes>>(args)...);
                 return;
             }
             throw method_not_found_exception(name);
@@ -2030,7 +2038,7 @@ namespace simple_reflection {
                 }
             }
 
-            auto search = search_method_in_base_classes(*this, name);
+            auto search = _search_method_in_base_classes(*this, name);
             if (search.has_value()) {
                 auto reflection = get_reflection(search.value());
                 return reflection.invoke_method<ClassType>(object, std::move(name), args);
@@ -2049,7 +2057,7 @@ namespace simple_reflection {
                 }
             }
 
-            auto search = search_method_in_base_classes(*this, name);
+            auto search = _search_method_in_base_classes(*this, name);
             if (search.has_value()) {
                 auto reflection = get_reflection(search.value());
                 ReturnValueProxy proxy = reflection.invoke_method(object, std::move(name));
