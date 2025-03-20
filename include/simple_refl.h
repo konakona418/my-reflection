@@ -29,6 +29,9 @@
 
 /** Simple Reflection Library. */
 namespace simple_reflection {
+    class ReflectionBase;
+    class ReflectionRegistryBase;
+
     template <typename FullName>
     struct extract_member_type;
 
@@ -1092,6 +1095,8 @@ namespace simple_reflection {
         return wrap_function_impl(function, std::make_index_sequence<sizeof...(ArgTypes)>{});
     }
 
+    ReflectionBase& get_reflection(std::type_index index);
+
     using NameTypeInfo = std::pair<std::string, std::type_index>;
 
     using NameTypeInfoList = std::vector<NameTypeInfo>;
@@ -1117,6 +1122,8 @@ namespace simple_reflection {
         std::unordered_map<std::string, Member> m_offsets = {};
         std::unordered_map<std::string, std::pmr::vector<CallableWrapper>> m_funcs = {};
         std::unordered_map<std::string, Metadata> m_metadata = {};
+
+        std::pmr::vector<std::type_index> m_derived_from;
 
         std::type_index m_base_type_index = typeid(void);
         std::string m_base_type_name;
@@ -1153,6 +1160,13 @@ namespace simple_reflection {
                 func.return_type, std::get<std::type_index>(func.parent_type),
                 std::vector<std::type_index>{func.arg_types.begin(), func.arg_types.end()});
             return {fn_info};
+        }
+
+        template <typename ReturnType, typename... ArgTypes>
+        ReturnType _propagate(ReflectionBase& base,
+                              ReturnType (ReflectionBase::*method)(ArgTypes...),
+                              ArgTypes&&... args) {
+            return (base.*method)(std::forward<ArgTypes>(args)...);
         }
 
     public:
@@ -1196,6 +1210,17 @@ namespace simple_reflection {
                               Member(offset, sizeof(MemberType), is_const, typeid(MemberType))
                               .init_setter<MemberType>());
 
+            return *this;
+        }
+
+        ReflectionBase& derives_from(std::type_index parent) {
+            m_derived_from.emplace_back(parent);
+            return *this;
+        }
+
+        template <typename Parent>
+        ReflectionBase& derives_from() {
+            m_derived_from.emplace_back(typeid(Parent));
             return *this;
         }
 
@@ -1343,6 +1368,16 @@ namespace simple_reflection {
                 }
                 return static_cast<MemberType *>(reinterpret_cast<void *>(object) + member.offset);
             }
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated = _propagate<MemberType*, ClassType*, std::string&&>(
+                        reflection,
+                        get_member_ref<MemberType, ClassType>, std::move(object), std::move(std::string(name)));
+                    propagated != nullptr) {
+                    return propagated;
+                }
+            }
             return nullptr;
         }
 
@@ -1362,6 +1397,16 @@ namespace simple_reflection {
                 const auto& member = find->second;
                 return object + member.offset;
             }
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated = _propagate<void *, void *, std::string&&>(reflection,
+                        get_member_ref, std::move(object), std::move(std::string(name)));
+                    propagated != nullptr) {
+                    return propagated;
+                }
+            }
+
             return nullptr;
         }
 
@@ -1384,6 +1429,16 @@ namespace simple_reflection {
                 }
                 return static_cast<const type *>(reinterpret_cast<void *>(object) + member.offset);
             }
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated = _propagate(
+                    reflection,
+                    get_const_member_ref<MemberType, ClassType>, object, name); propagated != nullptr) {
+                    return propagated;
+                }
+            }
+
             return nullptr;
         }
 
@@ -1398,6 +1453,15 @@ namespace simple_reflection {
                 const auto& member = find->second;
                 return object + member.offset;
             }
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated = _propagate<const void *, const void *, const std::string&>(reflection,
+                    get_const_member_ref, std::move(object), name); propagated != nullptr) {
+                    return propagated;
+                }
+            }
+
             return nullptr;
         }
 
@@ -1406,6 +1470,16 @@ namespace simple_reflection {
                 const auto& member = find->second;
                 return RawObjectWrapper(object + member.offset, member.type_info);
             }
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated =
+                        _propagate<RawObjectWrapper, void *, const std::string&>(reflection,
+                            get_member_wrapped, std::move(object), name); !propagated.is_none_type()) {
+                    return propagated;
+                }
+            }
+
             return RawObjectWrapper::none();
         }
 
@@ -2002,6 +2076,10 @@ namespace simple_reflection {
     template <typename ClassType>
     ReflectionBase& make_reflection() {
         return ReflectionRegistryBase::instance().register_base<ClassType>();
+    }
+
+    inline ReflectionBase& get_reflection(std::type_index index) {
+        return ReflectionRegistryBase::instance().get_reflection(index);
     }
 }
 
