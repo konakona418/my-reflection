@@ -51,7 +51,9 @@ namespace derive_test {
     inline void base_derive_test() {
         auto derived = derived_refl.invoke_function("ctor");
         assert(derived_refl.set_member(derived.get_raw(), "x", simple_reflection::wrap_object(114514)));
-        std::cout << "derived.get_x() = " << *derived_refl.get_member_ref<int>(derived.get_raw(), "x") << std::endl;
+        std::cout << "derived.x = " << *derived_refl.get_member_ref<int>(derived.get_raw(), "x") << std::endl;
+        std::cout << "derived.get_x() = "
+            << derived_refl.invoke_method<int>(derived.get_raw(), "get_x") << std::endl;
     }
 
     inline void run_tests() {
