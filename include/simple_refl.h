@@ -1371,7 +1371,7 @@ namespace simple_reflection {
 
             for (auto base: m_derived_from) {
                 auto reflection = get_reflection(base);
-                if (auto propagated = _propagate<MemberType*, ClassType*, std::string&&>(
+                if (auto propagated = _propagate<MemberType *, ClassType *, std::string&&>(
                         reflection,
                         get_member_ref<MemberType, ClassType>, std::move(object), std::move(std::string(name)));
                     propagated != nullptr) {
@@ -1492,41 +1492,84 @@ namespace simple_reflection {
          * @param name The name of the member.
          * @param value The pointer to the value you want to assign to the member.
          */
-        void set_member(void* object, const std::string& name, void* value) {
+        template <
+            typename ValueType,
+            std::enable_if_t<std::is_same_v<ValueType, void *>, bool>  = false
+        >
+        bool set_member(void* object, const std::string& name, ValueType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 member.setter(object, value);
-                return;
+                return true;
             }
-            throw std::runtime_error("Member not found");
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated =
+                        _propagate<bool, void *, const std::string&, void *>(
+                            reflection,
+                            set_member<ValueType>, std::move(object), name,
+                            std::move(value)); propagated) {
+                    return true;
+                }
+            }
+            return false;
         }
 
-        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>,
-            bool>  = false>
-        void set_member(void* object, std::string&& name, WrapperType value) {
+        template <
+            typename WrapperType,
+            std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>, bool>  = false
+        >
+        bool set_member(void* object, std::string&& name, WrapperType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 if (value.type_index != member.type_info) {
-                    throw std::runtime_error("Type mismatch");
+                    return false;
                 }
                 member.setter(object, value.object);
-                return;
+                return true;
             }
-            throw std::runtime_error("Member not found");
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated =
+                        _propagate<bool, void *, std::string&&, RawObjectWrapper>(
+                            reflection,
+                            set_member<WrapperType>, std::move(object), std::move(std::string(name)),
+                            std::move(value)); propagated) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
-        template <typename WrapperType, std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>,
-            bool>  = false>
-        void set_member(void* object, std::string& name, WrapperType value) {
+        template <
+            typename WrapperType,
+            std::enable_if_t<std::is_same_v<remove_cvref_t<WrapperType>, RawObjectWrapper>, bool>  = false
+        >
+        bool set_member(void* object, std::string& name, WrapperType value) {
             if (const auto find = m_offsets.find(name); find != m_offsets.end()) {
                 const auto& member = find->second;
                 if (value.type_index != member.type_info) {
-                    throw std::runtime_error("Type mismatch");
+                    return false;
                 }
                 member.setter(object, value.object);
-                return;
+                return true;
             }
-            throw std::runtime_error("Member not found");
+
+            for (auto base: m_derived_from) {
+                auto reflection = get_reflection(base);
+                if (auto propagated =
+                        _propagate<bool, void *, std::string&, WrapperType>(
+                            reflection,
+                            set_member<WrapperType>, std::move(object), name,
+                            std::move(value)); propagated) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /**
