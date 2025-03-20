@@ -163,7 +163,7 @@ namespace simple_reflection {
         return std::any_cast<T>(std::addressof(a)) != nullptr;
     }
 
-    bool string_contains(const std::string& full_string, const std::string& sub_string) {
+    inline bool string_contains(const std::string& full_string, const std::string& sub_string) {
         return full_string.find(sub_string) != std::string::npos;
     }
 
@@ -222,7 +222,6 @@ namespace simple_reflection {
         return aliases["T"];
     }
 
-
     template <typename T>
     std::string extract_type_name() {
         std::string fn_sig;
@@ -239,6 +238,103 @@ namespace simple_reflection {
         return std::string(typeid(T).name());
 #endif
         return type_name;
+    }
+
+    struct ParsedTypeString {
+        std::string type_name;
+        std::vector<std::string> namespaces;
+
+        std::vector<ParsedTypeString> templates;
+
+        friend std::ostream& operator<<(std::ostream& os, const ParsedTypeString& pts) {
+            for (auto& ns: pts.namespaces) {
+                os << ns << "::";
+            }
+            os << pts.type_name;
+            for (auto& t: pts.templates) {
+                os << "<" << t << ">";
+            }
+            return os;
+        }
+
+        [[nodiscard]] std::string as_readable_format() const {
+            std::stringstream ss;
+            ss << this->type_name;
+            if (!this->templates.empty()) {
+                ss << "<";
+                for (size_t i = 0; i < this->templates.size(); ++i) {
+                    ss << 'T' << i;
+                    if (i != this->templates.size() - 1) {
+                        ss << ", ";
+                    }
+                }
+                ss << ">";
+            }
+            ss << " [of namespace ";
+
+            for (size_t i = 0; i < this->namespaces.size(); ++i) {
+                ss << this->namespaces[i];
+                if (i != this->namespaces.size() - 1) {
+                    ss << "::";
+                }
+            }
+
+            if (!this->templates.empty()) {
+                ss << "; with template args ";
+                for (size_t i = 0; i < this->templates.size(); ++i) {
+                    ss << "T" << i << " = ";
+                    ss << this->templates[i];
+                    if (i != this->templates.size() - 1) {
+                        ss << ", ";
+                    }
+                }
+            }
+            ss << "]";
+            return ss.str();
+        }
+    };
+
+    inline ParsedTypeString parse_type_string(const std::string& type) {
+        ParsedTypeString result;
+
+        auto type_string = type;
+
+        if (type_string.find('<') != std::string::npos) {
+            const size_t begin = type_string.find('<') + 1;
+            const size_t end = type_string.find('>');
+
+            const std::string type_args = type_string.substr(begin, end - begin);
+            type_string = type_string.substr(0, begin - 1);
+
+            std::vector<size_t> commas;
+            for (size_t i = 0; i < type_args.size(); ++i) {
+                if (type_args[i] == ',') {
+                    commas.push_back(i);
+                }
+            }
+
+            if (!commas.empty()) {
+                for (size_t i = 0; i < commas.size(); ++i) {
+                    const size_t start = i == 0 ? begin : commas[i - 1] + 1;
+                    const size_t stop = commas[i];
+                    result.templates.push_back(parse_type_string(type_args.substr(start, stop - start)));
+                }
+            } else {
+                result.templates.push_back(parse_type_string(type_args));
+            }
+        }
+
+        if (type_string.find("::") != std::string::npos) {
+            size_t first_colon = type_string.find_first_of("::");
+            while (first_colon != std::string::npos) {
+                result.namespaces.push_back(type_string.substr(0, first_colon));
+                type_string = type_string.substr(first_colon + 2);
+                first_colon = type_string.find_first_of("::");
+            }
+        }
+
+        result.type_name = type_string;
+        return result;
     }
 
     class method_not_found_exception final : public std::exception {
@@ -1024,6 +1120,7 @@ namespace simple_reflection {
 
         std::type_index m_base_type_index = typeid(void);
         std::string m_base_type_name;
+        ParsedTypeString m_type_parsed;
 
         template <typename ClassType, typename ReturnType, typename... ArgTypes>
         std::any _parse_method(ReturnType (ClassType::*Method)(ArgTypes...)) {
@@ -1062,7 +1159,9 @@ namespace simple_reflection {
         ReflectionBase() = delete;
 
         explicit ReflectionBase(std::type_index base_type_index, std::string&& base_type_name)
-            : m_base_type_index(base_type_index), m_base_type_name(std::move(base_type_name)) {
+            : m_base_type_index(base_type_index) {
+            m_base_type_name = std::move(base_type_name);
+            m_type_parsed = parse_type_string(m_base_type_name);
         }
 
         std::type_index get_type() const {
@@ -1071,6 +1170,10 @@ namespace simple_reflection {
 
         std::string get_type_string() const {
             return m_base_type_name;
+        }
+
+        ParsedTypeString get_type_parsed() const {
+            return m_type_parsed;
         }
 
         /**
@@ -1854,7 +1957,7 @@ namespace simple_reflection {
         ReflectionBase& register_base() {
             m_type_index_map.emplace(extract_type_name<ClassType>(), typeid(ClassType));
             return register_base(typeid(ClassType), ReflectionBase(typeid(ClassType),
-                                                            extract_type_name<ClassType>()));
+                                                                   extract_type_name<ClassType>()));
         }
 
         ReflectionBase& get_reflection(const std::string& type_name) {
@@ -1863,9 +1966,9 @@ namespace simple_reflection {
             } catch (const std::out_of_range&) {
                 std::stringstream ss;
                 ss << "ReflectionRegistryBase not found for type with name. " <<
-                    "Perhaps you forgot to register it, " <<
+                        "Perhaps you forgot to register it, " <<
                         "or you did not register it with the override which supports this function: " <<
-                            type_name;
+                        type_name;
                 throw reflection_registry_not_found_exception(ss.str());
             }
         }

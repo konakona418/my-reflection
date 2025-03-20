@@ -635,6 +635,11 @@ namespace json_mapper {
     json_parser::JsonObject dump_json_object(Serializable& object) {
         try {
             auto base = simple_reflection::ReflectionRegistryBase::instance().get_reflection(typeid(Serializable));
+            if (base.has_metadata("json_object_type")) {
+                if (base.get_metadata_as<std::string>("json_object_type") == "array_like") {
+                    return _dump_json_array(&object, base);
+                }
+            }
             return _dump_json_object(&object, base);
         } catch (const std::exception& e) {
             throw std::runtime_error("type " + std::string(typeid(Serializable).name()) + " is not registered");
@@ -777,12 +782,12 @@ namespace json_parser_test {
         deserialized.print();
         test_helper::dbg_print("time elapsed: ", stopwatch.elapsed_ms(), "ms");
 
-        print_object(json_mapper::dump_json_object(deserialized), std::cout, true);
+        print_object(json_mapper::dump_json_object(deserialized), std::cout, false);
         std::cout << std::endl;
 
         auto refl = simple_reflection::ReflectionRegistryBase::instance()
             .get_reflection("json_mapper::JsonVector<std::string>");
-        std::cout << refl.get_type_string() << std::endl;
+        std::cout << refl.get_type_parsed().as_readable_format() << std::endl;
         // print_object(result);
     }
 }
